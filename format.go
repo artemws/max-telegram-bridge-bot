@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 
@@ -75,4 +76,34 @@ func formatTgCrosspostCaption(msg *tgbotapi.Message) string {
 // formatMaxCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)
 func formatMaxCrosspostCaption(upd *maxschemes.MessageCreatedUpdate) string {
 	return upd.Message.Body.Text
+}
+
+// mimeToFilename генерирует имя файла из MIME-типа, если оригинальное имя отсутствует.
+func mimeToFilename(base, mime string) string {
+	ext := ""
+	// sub = часть после "/" в mime type
+	if i := strings.Index(mime, "/"); i >= 0 {
+		sub := mime[i+1:]
+		switch sub {
+		case "mp4":
+			ext = ".mp4"
+		case "webm":
+			ext = ".webm"
+		case "x-matroska":
+			ext = ".mkv"
+		case "quicktime":
+			ext = ".mov"
+		case "mpeg":
+			ext = ".mpeg"
+		case "ogg":
+			ext = ".ogg"
+		case "pdf":
+			ext = ".pdf"
+		case "gif":
+			ext = ".gif"
+		default:
+			ext = "." + sub
+		}
+	}
+	return base + ext
 }

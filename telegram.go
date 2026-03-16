@@ -110,10 +110,12 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n"+
 						"/unbridge — удалить связку\n\n"+
 						"Кросспостинг каналов:\n"+
-						"1. Перешлите пост из TG-канала в личку TG-бота\n"+
-						"2. Бот покажет ID — скопируйте\n"+
-						"3. В личке MAX-бота: /crosspost <TG_ID>\n"+
-						"4. Перешлите пост из MAX-канала → готово!\n\n"+
+						"1. Добавьте бота админом в оба канала (с правом постинга)\n"+
+						"2. Перешлите пост из TG-канала в личку TG-бота\n"+
+						"3. Бот покажет ID — скопируйте\n"+
+						"4. В личке MAX-бота: /crosspost <TG_ID>\n"+
+						"5. Перешлите пост из MAX-канала → готово!\n\n"+
+						"/crosspost — список всех связок с кнопками управления\n"+
 						"Управление: перешлите пост из связанного канала → кнопки\n\n"+
 						"Как связать группы:\n"+
 						"1. Добавьте бота в оба чата\n"+
@@ -294,20 +296,41 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 		return
 	} else if msg.Video != nil {
-		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Video.FileID, maxschemes.VIDEO, "video.mp4"); err == nil {
+		name := "video.mp4"
+		if msg.Video.FileName != "" {
+			name = msg.Video.FileName
+		}
+		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Video.FileID, maxschemes.VIDEO, name); err == nil {
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
 		} else {
 			slog.Error("TG→MAX video upload failed", "err", err)
 		}
-	} else if msg.Document != nil {
-		name := "document"
-		if msg.Document.FileName != "" {
-			name = msg.Document.FileName
-		}
-		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Document.FileID, maxschemes.FILE, name); err == nil {
+	} else if msg.VideoNote != nil {
+		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.VideoNote.FileID, maxschemes.VIDEO, "circle.mp4"); err == nil {
 			mediaToken = uploaded.Token
-			mediaAttType = "file"
+			mediaAttType = "video"
+		} else {
+			slog.Error("TG→MAX video note upload failed", "err", err)
+		}
+	} else if msg.Document != nil {
+		name := msg.Document.FileName
+		uploadType := maxschemes.FILE
+		attType := "file"
+		// Документ с video MIME → загружаем как видео
+		if strings.HasPrefix(msg.Document.MimeType, "video/") {
+			uploadType = maxschemes.VIDEO
+			attType = "video"
+			if name == "" {
+				name = mimeToFilename("video", msg.Document.MimeType)
+			}
+		}
+		if name == "" {
+			name = mimeToFilename("document", msg.Document.MimeType)
+		}
+		if uploaded, err := b.uploadTgMediaToMax(ctx, msg.Document.FileID, uploadType, name); err == nil {
+			mediaToken = uploaded.Token
+			mediaAttType = attType
 		} else {
 			slog.Error("TG→MAX file upload failed", "err", err)
 		}
