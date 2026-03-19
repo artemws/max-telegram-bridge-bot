@@ -554,7 +554,7 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			return
 		}
 		slog.Info("TG crosspost unlink", "maxChatID", maxChatID, "by", fromID)
-		b.repo.UnpairCrosspost(maxChatID)
+		b.repo.UnpairCrosspost(maxChatID, fromID)
 		edit := tgbotapi.NewEditMessageText(chatID, msgID, "Кросспостинг удалён.")
 		b.tgBot.Send(edit)
 		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Удалено"))

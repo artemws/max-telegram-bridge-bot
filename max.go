@@ -452,7 +452,7 @@ func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.Messag
 			return
 		}
 		slog.Info("MAX crosspost unlink", "maxChatID", maxChatID, "by", userID)
-		b.repo.UnpairCrosspost(maxChatID)
+		b.repo.UnpairCrosspost(maxChatID, userID)
 		body := &maxschemes.NewMessageBody{Text: "Кросспостинг удалён."}
 		b.maxApi.Messages.AnswerOnCallback(ctx, callbackID, &maxschemes.CallbackAnswer{
 			Message:      body,

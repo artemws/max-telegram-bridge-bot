@@ -34,7 +34,7 @@ type Repository interface {
 	GetCrosspostTgChat(maxChatID int64) (tgChatID int64, direction string, ok bool)
 	ListCrossposts(ownerID int64) []CrosspostLink
 	SetCrosspostDirection(maxChatID int64, direction string) bool
-	UnpairCrosspost(maxChatID int64) bool
+	UnpairCrosspost(maxChatID, deletedBy int64) bool
 
 	// Send queue (retry при недоступности MAX/TG API)
 	EnqueueSend(item *QueueItem) error
