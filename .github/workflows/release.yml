@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -15,17 +16,16 @@ on:
         type: choice
         default: 'release'
         options:
-          - release    # собрать и загрузить в GitHub Release
-          - artifacts  # собрать и сохранить как Actions artifacts (без релиза)
+          - release    # build and upload to GitHub Release
+          - artifacts  # build and save as Actions artifacts (no release)
 
 permissions:
   contents: write
   packages: write
 
 env:
-  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-  # release — при триггере от release event; иначе берём из inputs
-  BUILD_MODE: ${{ github.event_name == 'release' && 'release' || inputs.mode }}
+  RELEASE_TAG: ${{ github.ref_name || inputs.tag }}
+  BUILD_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'release' }}
 
 jobs:
   prepare:
@@ -33,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Create release if triggered manually in release mode
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'release'
@@ -43,6 +45,21 @@ jobs:
             gh release create ${{ env.RELEASE_TAG }} \
               --title "${{ env.RELEASE_TAG }}" \
               --notes "Released ${{ env.RELEASE_TAG }}"
+
+      - name: Generate changelog and create release (tag push)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ env.RELEASE_TAG }}" ]; then
+            CHANGELOG=$(git log --oneline --no-merges -20)
+          else
+            CHANGELOG=$(git log --oneline --no-merges ${PREV_TAG}..HEAD)
+          fi
+          gh release create ${{ env.RELEASE_TAG }} \
+            --title "${{ env.RELEASE_TAG }}" \
+            --notes "$CHANGELOG" || true
 
   binaries:
     name: Build binaries
@@ -68,7 +85,6 @@ jobs:
           CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc \
             go build -ldflags="-s -w" -o max-telegram-bridge-bot-linux-arm64 .
 
-      # Загружаем в релиз
       - name: Upload binaries to release
         if: env.BUILD_MODE == 'release'
         env:
@@ -79,7 +95,6 @@ jobs:
             max-telegram-bridge-bot-linux-arm64 \
             --clobber
 
-      # Сохраняем как Actions artifact
       - name: Save binaries as artifacts
         if: env.BUILD_MODE == 'artifacts'
         uses: actions/upload-artifact@v4
@@ -97,7 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU (for arm64 emulation)
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -115,7 +130,6 @@ jobs:
         id: repo
         run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # Push multi-arch в GHCR — только в release режиме
       - name: Build and push to GHCR (multi-arch)
         if: env.BUILD_MODE == 'release'
         uses: docker/build-push-action@v6
@@ -149,7 +163,6 @@ jobs:
           outputs: type=docker,dest=max-telegram-bridge-bot-linux-arm64-docker.tar
           cache-from: type=gha
 
-      # Загружаем tar в релиз
       - name: Upload Docker tars to release
         if: env.BUILD_MODE == 'release'
         env:
@@ -160,7 +173,6 @@ jobs:
             max-telegram-bridge-bot-linux-arm64-docker.tar \
             --clobber
 
-      # Сохраняем tar как Actions artifact
       - name: Save Docker tars as artifacts
         if: env.BUILD_MODE == 'artifacts'
         uses: actions/upload-artifact@v4
