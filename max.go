@@ -52,9 +52,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				del := tgbotapi.NewDeleteMessage(tgChatID, tgMsgID)
 				if _, err := b.tgBot.Request(del); err != nil {
-					slog.Error("MAX→TG delete failed", "err", err)
+					slog.Error("MAX→TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
 				} else {
-					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID)
+					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID, "tgChat", tgChatID)
 				}
 				continue
 			}
@@ -86,9 +86,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				editMsg := tgbotapi.NewEditMessageText(tgChatID, tgMsgID, fwd)
 				if _, err := b.tgBot.Send(editMsg); err != nil {
-					slog.Error("MAX→TG edit failed", "err", err)
+					slog.Error("MAX→TG edit failed", "err", err, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				} else {
-					slog.Info("MAX→TG edited", "tgMsg", tgMsgID)
+					slog.Info("MAX→TG edited", "tgMsg", tgMsgID, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				}
 				continue
 			}
@@ -109,7 +109,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 			text := strings.TrimSpace(body.Text)
 			isDialog := msgUpd.Message.Recipient.ChatType == "dialog"
 
-			slog.Debug("MAX msg received", "from", msgUpd.Message.Sender.Name, "chat", chatID, "type", msgUpd.Message.Recipient.ChatType)
+			slog.Debug("MAX msg received", "uid", msgUpd.Message.Sender.UserId, "chat", chatID, "type", msgUpd.Message.Recipient.ChatType)
 
 			// Запоминаем юзера при личном сообщении
 			if isDialog && msgUpd.Message.Sender.UserId != 0 {
@@ -323,7 +323,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 						SetText(fmt.Sprintf("Кросспостинг настроен!\nTG: %d ↔ MAX: %d\nНаправление: ⟷ оба", tgChannelID, maxChannelID)).
 						AddKeyboard(kb)
 					b.maxApi.Messages.Send(ctx, m)
-					slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID)
+					slog.Info("crosspost paired", "tg", tgChannelID, "max", maxChannelID, "maxOwner", msgUpd.Message.Sender.UserId, "tgOwner", tgOwnerID)
 					continue
 				}
 
@@ -386,8 +386,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 func (b *Bridge) handleMaxCallback(ctx context.Context, cbUpd *maxschemes.MessageCallbackUpdate) {
 	data := cbUpd.Callback.Payload
 	callbackID := cbUpd.Callback.CallbackID
-
 	userID := cbUpd.Callback.User.UserId
+
+	slog.Debug("MAX callback", "uid", userID, "data", data)
 
 	// cpd:dir:maxChatID — change direction
 	if strings.HasPrefix(data, "cpd:") {
@@ -644,7 +645,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	if sendErr != nil {
-		slog.Error("MAX→TG send failed", "err", sendErr)
+		slog.Error("MAX→TG send failed", "err", sendErr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 		if b.cbFail(tgChatID) {
 			m := maxbot.NewMessage().SetChat(chatID).SetText(
 				fmt.Sprintf("Не удалось переслать в Telegram. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в TG-чат.", int(cbCooldown.Minutes())))
@@ -652,7 +653,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 	} else {
 		b.cbSuccess(tgChatID)
-		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent)
+		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 		b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
 	}
 }
