@@ -1,18 +1,21 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -27,10 +30,28 @@ jobs:
       - name: Build linux/arm64
         run: CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -o max-telegram-bridge-bot-linux-arm64 .
 
-      - name: Upload binaries
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${{ github.ref_name }}" ]; then
+            CHANGELOG=$(git log --oneline --no-merges -20)
+          else
+            CHANGELOG=$(git log --oneline --no-merges ${PREV_TAG}..HEAD)
+          fi
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.event.release.tag_name }} max-telegram-bridge-bot-linux-amd64 max-telegram-bridge-bot-linux-arm64
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "${{ github.ref_name }}" \
+            --notes "${{ steps.changelog.outputs.changelog }}" \
+            max-telegram-bridge-bot-linux-amd64 \
+            max-telegram-bridge-bot-linux-arm64
 
   docker:
     runs-on: ubuntu-latest
@@ -55,5 +76,5 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.event.release.tag_name }}
+            ghcr.io/${{ steps.repo.outputs.name }}:${{ github.ref_name }}
             ghcr.io/${{ steps.repo.outputs.name }}:latest
