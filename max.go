@@ -53,9 +53,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				del := tgbotapi.NewDeleteMessage(tgChatID, tgMsgID)
 				if _, err := b.tgBot.Request(del); err != nil {
-					slog.Error("MAX→TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
+					slog.Error("MAX-to-TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
 				} else {
-					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID, "tgChat", tgChatID)
+					slog.Info("MAX-to-TG deleted", "tgMsg", tgMsgID, "tgChat", tgChatID)
 				}
 				continue
 			}
@@ -87,9 +87,9 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				}
 				editMsg := tgbotapi.NewEditMessageText(tgChatID, tgMsgID, fwd)
 				if _, err := b.tgBot.Send(editMsg); err != nil {
-					slog.Error("MAX→TG edit failed", "err", err, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
+					slog.Error("MAX-to-TG edit failed", "err", err, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				} else {
-					slog.Info("MAX→TG edited", "tgMsg", tgMsgID, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
+					slog.Info("MAX-to-TG edited", "tgMsg", tgMsgID, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				}
 				continue
 			}
@@ -369,7 +369,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				continue
 			}
 			if direction == "tg>max" {
-				continue // только TG→MAX, пропускаем
+				continue // только TG-to-MAX, пропускаем
 			}
 
 			// Anti-loop
@@ -582,13 +582,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if err != nil {
 					var e *ErrFileTooLarge
 					if errors.As(err, &e) {
-						slog.Warn("MAX→TG photo too big", "size", e.Size)
+						slog.Warn("MAX-to-TG photo too big", "size", e.Size)
 						m := maxbot.NewMessage().SetChat(chatID).SetText(
 							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 						b.maxApi.Messages.Send(ctx, m)
 					} else {
-						slog.Error("MAX→TG photo download failed", "err", err)
+						slog.Error("MAX-to-TG photo download failed", "err", err)
 					}
 					break
 				}
@@ -607,13 +607,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if err != nil {
 					var e *ErrFileTooLarge
 					if errors.As(err, &e) {
-						slog.Warn("MAX→TG video too big", "size", e.Size)
+						slog.Warn("MAX-to-TG video too big", "size", e.Size)
 						m := maxbot.NewMessage().SetChat(chatID).SetText(
 							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 						b.maxApi.Messages.Send(ctx, m)
 					} else {
-						slog.Error("MAX→TG video download failed", "err", err)
+						slog.Error("MAX-to-TG video download failed", "err", err)
 					}
 					break
 				}
@@ -632,13 +632,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if err != nil {
 					var e *ErrFileTooLarge
 					if errors.As(err, &e) {
-						slog.Warn("MAX→TG audio too big", "size", e.Size)
+						slog.Warn("MAX-to-TG audio too big", "size", e.Size)
 						m := maxbot.NewMessage().SetChat(chatID).SetText(
 							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 						b.maxApi.Messages.Send(ctx, m)
 					} else {
-						slog.Error("MAX→TG audio download failed", "err", err)
+						slog.Error("MAX-to-TG audio download failed", "err", err)
 					}
 					break
 				}
@@ -657,13 +657,13 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if err != nil {
 					var e *ErrFileTooLarge
 					if errors.As(err, &e) {
-						slog.Warn("MAX→TG file too big", "size", e.Size, "name", e.Name)
+						slog.Warn("MAX-to-TG file too big", "size", e.Size, "name", e.Name)
 						m := maxbot.NewMessage().SetChat(chatID).SetText(
 							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
 						b.maxApi.Messages.Send(ctx, m)
 					} else {
-						slog.Error("MAX→TG file download failed", "err", err)
+						slog.Error("MAX-to-TG file download failed", "err", err)
 					}
 					break
 				}
@@ -702,7 +702,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	if sendErr != nil {
-		slog.Error("MAX→TG send failed", "err", sendErr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+		slog.Error("MAX-to-TG send failed", "err", sendErr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 		if b.cbFail(tgChatID) {
 			m := maxbot.NewMessage().SetChat(chatID).SetText(
 				fmt.Sprintf("Не удалось переслать в Telegram. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в TG-чат.", int(cbCooldown.Minutes())))
@@ -710,7 +710,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 	} else {
 		b.cbSuccess(tgChatID)
-		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+		slog.Info("MAX-to-TG sent", "msgID", sent.MessageID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 		b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
 	}
 }

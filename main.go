@@ -88,7 +88,7 @@ func main() {
 	if len(cfg.AdminIDs) > 0 {
 		slog.Info("Access restricted", "admin_ids", cfg.AdminIDs)
 	} else {
-		slog.Warn("ADMIN_IDS is not set — bot is accessible to everyone")
+		slog.Warn("ADMIN_IDS is not set - bot is accessible to everyone")
 	}
 
 	tgToken := mustEnv("TG_TOKEN")
@@ -102,14 +102,14 @@ func main() {
 			slog.Error("PostgreSQL error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("БД: PostgreSQL")
+		slog.Info("DB: PostgreSQL")
 	} else {
 		repo, err = NewSQLiteRepo(dbPath)
 		if err != nil {
 			slog.Error("SQLite error", "err", err)
 			os.Exit(1)
 		}
-		slog.Info("БД: SQLite", "path", dbPath)
+		slog.Info("DB: SQLite", "path", dbPath)
 	}
 	defer repo.Close()
 
@@ -118,7 +118,7 @@ func main() {
 		slog.Error("TG bot error", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("Telegram бот запущен", "username", tgBot.Self.UserName)
+	slog.Info("Telegram bot started", "username", tgBot.Self.UserName)
 
 	maxApi, err := maxbot.New(cfg.MaxToken)
 	if err != nil {
@@ -130,7 +130,7 @@ func main() {
 		slog.Error("MAX bot info error", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("MAX бот запущен", "name", maxInfo.Name)
+	slog.Info("MAX bot started", "name", maxInfo.Name)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -139,11 +139,11 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		slog.Info("Завершение...")
+		slog.Info("Shutting down...")
 		cancel()
 	}()
 
 	bridge := NewBridge(cfg, repo, tgBot, maxApi)
 	bridge.Run(ctx)
-	slog.Info("Bridge остановлен")
+	slog.Info("Bridge stopped")
 }

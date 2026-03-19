@@ -80,9 +80,9 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				}
 				m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
 				if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
-					slog.Error("TG→MAX edit failed", "err", err, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
+					slog.Error("TG-to-MAX edit failed", "err", err, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
 				} else {
-					slog.Info("TG→MAX edited", "mid", maxMsgID, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
+					slog.Info("TG-to-MAX edited", "mid", maxMsgID, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
 				}
 				continue
 			}
@@ -345,7 +345,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 				m.AddPhoto(uploaded)
 			} else {
-				slog.Error("TG→MAX photo upload failed", "err", err)
+				slog.Error("TG-to-MAX photo upload failed", "err", err)
 			}
 		}
 		if msg.ReplyToMessage != nil {
@@ -353,17 +353,17 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				m.SetReply(caption, maxReplyID)
 			}
 		}
-		slog.Info("TG→MAX sending photo", "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		slog.Info("TG-to-MAX sending photo", "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 		if err != nil {
-			slog.Error("TG→MAX send failed", "err", err, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+			slog.Error("TG-to-MAX send failed", "err", err, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 			if b.cbFail(maxChatID) {
 				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
 					fmt.Sprintf("Не удалось переслать в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
 			}
 		} else {
 			b.cbSuccess(maxChatID)
-			slog.Info("TG→MAX sent", "mid", result.Body.Mid)
+			slog.Info("TG-to-MAX sent", "mid", result.Body.Mid)
 			b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
 		}
 		return
@@ -379,7 +379,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
 		} else {
-			slog.Error("TG→MAX gif upload failed", "err", err)
+			slog.Error("TG-to-MAX gif upload failed", "err", err)
 		}
 	} else if msg.Sticker != nil {
 		if msg.Sticker.IsAnimated {
@@ -390,7 +390,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				mediaToken = uploaded.Token
 				mediaAttType = "video"
 			} else {
-				slog.Error("TG→MAX sticker upload failed", "err", err)
+				slog.Error("TG-to-MAX sticker upload failed", "err", err)
 			}
 		} else {
 			// Обычный стикер WebP → отправляем как фото
@@ -403,17 +403,17 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 							m.SetReply(caption, maxReplyID)
 						}
 					}
-					slog.Info("TG→MAX sending sticker as photo", "uid", msg.From.ID, "tgChat", msg.Chat.ID)
+					slog.Info("TG-to-MAX sending sticker as photo", "uid", msg.From.ID, "tgChat", msg.Chat.ID)
 					result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 					if err != nil {
-						slog.Error("TG→MAX sticker send failed", "err", err)
+						slog.Error("TG-to-MAX sticker send failed", "err", err)
 					} else {
-						slog.Info("TG→MAX sent", "mid", result.Body.Mid)
+						slog.Info("TG-to-MAX sent", "mid", result.Body.Mid)
 						b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
 					}
 					return
 				} else {
-					slog.Error("TG→MAX sticker photo upload failed", "err", err)
+					slog.Error("TG-to-MAX sticker photo upload failed", "err", err)
 				}
 			}
 		}
@@ -429,7 +429,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
 		} else {
-			slog.Error("TG→MAX video upload failed", "err", err)
+			slog.Error("TG-to-MAX video upload failed", "err", err)
 		}
 	} else if msg.VideoNote != nil {
 		if checkSize(msg.VideoNote.FileSize) {
@@ -439,7 +439,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = "video"
 		} else {
-			slog.Error("TG→MAX video note upload failed", "err", err)
+			slog.Error("TG-to-MAX video note upload failed", "err", err)
 		}
 	} else if msg.Document != nil {
 		name := msg.Document.FileName
@@ -462,7 +462,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = attType
 		} else {
-			slog.Error("TG→MAX file upload failed", "err", err)
+			slog.Error("TG-to-MAX file upload failed", "err", err)
 		}
 	} else if msg.Voice != nil {
 		if checkSize(msg.Voice.FileSize) {
@@ -472,7 +472,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = "audio"
 		} else {
-			slog.Error("TG→MAX voice upload failed", "err", err)
+			slog.Error("TG-to-MAX voice upload failed", "err", err)
 		}
 	} else if msg.Audio != nil {
 		name := "audio.mp3"
@@ -486,7 +486,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaToken = uploaded.Token
 			mediaAttType = "file"
 		} else {
-			slog.Error("TG→MAX audio upload failed", "err", err)
+			slog.Error("TG-to-MAX audio upload failed", "err", err)
 		}
 	}
 
@@ -532,7 +532,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	var sendErr error
 
 	if mediaAttType != "" {
-		slog.Info("TG→MAX sending direct", "type", mediaAttType, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		slog.Info("TG-to-MAX sending direct", "type", mediaAttType, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		var format string
 		if hasFormatting {
 			format = "markdown"
@@ -543,12 +543,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if hasFormatting {
 			format = "markdown"
 		}
-		slog.Info("TG→MAX sending", "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		slog.Info("TG-to-MAX sending", "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, format)
 	}
 
 	if sendErr != nil {
-		slog.Error("TG→MAX send failed", "err", sendErr, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		slog.Error("TG-to-MAX send failed", "err", sendErr, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		// Ставим в очередь на повторную отправку
 		var format string
 		if hasFormatting {
@@ -561,7 +561,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		}
 	} else {
 		b.cbSuccess(maxChatID)
-		slog.Info("TG→MAX sent", "mid", mid, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		slog.Info("TG-to-MAX sent", "mid", mid, "uid", msg.From.ID, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
 	}
 }
@@ -580,7 +580,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 		return
 	}
 	if direction == "max>tg" {
-		return // только MAX→TG, пропускаем
+		return // только MAX-to-TG, пропускаем
 	}
 
 	// Anti-loop
@@ -776,8 +776,8 @@ func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *tgbotapi
 
 	m := maxbot.NewMessage().SetChat(maxChatID).SetText(text)
 	if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
-		slog.Error("TG→MAX crosspost edit failed", "err", err)
+		slog.Error("TG-to-MAX crosspost edit failed", "err", err)
 	} else {
-		slog.Info("TG→MAX crosspost edited", "mid", maxMsgID)
+		slog.Info("TG-to-MAX crosspost edited", "mid", maxMsgID)
 	}
 }
