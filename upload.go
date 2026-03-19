@@ -203,3 +203,102 @@ func (b *Bridge) sendMaxDirectFormatted(ctx context.Context, chatID int64, text 
 	}
 	return "", fmt.Errorf("MAX attachment not ready after 10 retries")
 }
+
+// formatFileSize форматирует размер файла в читаемый вид.
+func formatFileSize(size int) string {
+	switch {
+	case size >= 1024*1024:
+		return fmt.Sprintf("%.1f МБ", float64(size)/1024/1024)
+	case size >= 1024:
+		return fmt.Sprintf("%.1f КБ", float64(size)/1024)
+	default:
+		return fmt.Sprintf("%d Б", size)
+	}
+}
+
+// fileNameFromURL извлекает имя файла из URL, fallback — "file".
+func fileNameFromURL(rawURL string) string {
+	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
+		name := rawURL[idx+1:]
+		if q := strings.Index(name, "?"); q >= 0 {
+			name = name[:q]
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return "file"
+}
+
+// ErrFileTooLarge возвращается когда файл превышает допустимый лимит.
+type ErrFileTooLarge struct {
+	Size int64
+	Name string
+}
+
+func (e *ErrFileTooLarge) Error() string {
+	return fmt.Sprintf("file too large: %s (%s)", e.Name, formatFileSize(int(e.Size)))
+}
+
+// downloadURL скачивает файл по URL.
+// maxBytes — лимит размера в байтах (0 = без ограничений).
+// Возвращает байты и оригинальное имя файла (из Content-Disposition или URL).
+func (b *Bridge) downloadURL(ctx context.Context, url string, maxBytes int64) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create request: %w", err)
+	}
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, "", fmt.Errorf("download status: %d", resp.StatusCode)
+	}
+
+	// Имя файла определяем до чтения тела
+	name := ""
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		if i := strings.Index(cd, "filename=\""); i >= 0 {
+			rest := cd[i+len("filename=\""):]
+			if j := strings.Index(rest, "\""); j >= 0 {
+				name = rest[:j]
+			}
+		}
+		if name == "" {
+			if i := strings.Index(cd, "filename="); i >= 0 {
+				rest := strings.TrimSpace(cd[i+len("filename="):])
+				if j := strings.IndexAny(rest, "; \t"); j >= 0 {
+					name = rest[:j]
+				} else {
+					name = rest
+				}
+			}
+		}
+	}
+	if name == "" {
+		name = fileNameFromURL(url)
+	}
+
+	// Быстрая проверка по Content-Length
+	if maxBytes > 0 && resp.ContentLength > maxBytes {
+		return nil, name, &ErrFileTooLarge{Size: resp.ContentLength, Name: name}
+	}
+
+	// Читаем с ограничением
+	limit := maxBytes
+	if limit <= 0 {
+		limit = 1<<63 - 1
+	}
+	limited := io.LimitReader(resp.Body, limit+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, "", fmt.Errorf("read body: %w", err)
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, name, &ErrFileTooLarge{Size: int64(len(data)), Name: name}
+	}
+
+	return data, name, nil
+}

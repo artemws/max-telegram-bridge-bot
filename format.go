@@ -25,9 +25,9 @@ func formatTgCaption(msg *tgbotapi.Message, prefix bool) string {
 		text = msg.Caption
 	}
 	if prefix {
-		return fmt.Sprintf("[TG] %s: %s", name, text)
+		return fmt.Sprintf("[TG] %s:\n%s", name, text)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return fmt.Sprintf("%s:\n%s", name, text)
 }
 
 // formatTgMessage — для edit (полный формат)
@@ -41,9 +41,9 @@ func formatTgMessage(msg *tgbotapi.Message, prefix bool) string {
 		return ""
 	}
 	if prefix {
-		return fmt.Sprintf("[TG] %s: %s", name, text)
+		return fmt.Sprintf("[TG] %s:\n%s", name, text)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return fmt.Sprintf("%s:\n%s", name, text)
 }
 
 func maxName(upd *maxschemes.MessageCreatedUpdate) string {
@@ -59,9 +59,9 @@ func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix bool) string 
 	name := maxName(upd)
 	text := upd.Message.Body.Text
 	if prefix {
-		return fmt.Sprintf("[MAX] %s: %s", name, text)
+		return fmt.Sprintf("[MAX] %s:\n%s", name, text)
 	}
-	return fmt.Sprintf("%s: %s", name, text)
+	return fmt.Sprintf("%s:\n%s", name, text)
 }
 
 // formatTgCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)

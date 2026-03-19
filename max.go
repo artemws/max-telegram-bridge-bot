@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -577,7 +578,21 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		switch a := att.(type) {
 		case *maxschemes.PhotoAttachment:
 			if a.Payload.Url != "" {
-				photo := tgbotapi.NewPhoto(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				data, name, err := b.downloadURL(ctx, a.Payload.Url, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+				if err != nil {
+					var e *ErrFileTooLarge
+					if errors.As(err, &e) {
+						slog.Warn("MAX→TG photo too big", "size", e.Size)
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
+								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+						b.maxApi.Messages.Send(ctx, m)
+					} else {
+						slog.Error("MAX→TG photo download failed", "err", err)
+					}
+					break
+				}
+				photo := tgbotapi.NewPhoto(tgChatID, tgbotapi.FileBytes{Name: name, Bytes: data})
 				photo.Caption = htmlCaption
 				if useHTML {
 					photo.ParseMode = "HTML"
@@ -588,7 +603,21 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		case *maxschemes.VideoAttachment:
 			if a.Payload.Url != "" {
-				video := tgbotapi.NewVideo(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				data, name, err := b.downloadURL(ctx, a.Payload.Url, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+				if err != nil {
+					var e *ErrFileTooLarge
+					if errors.As(err, &e) {
+						slog.Warn("MAX→TG video too big", "size", e.Size)
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
+								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+						b.maxApi.Messages.Send(ctx, m)
+					} else {
+						slog.Error("MAX→TG video download failed", "err", err)
+					}
+					break
+				}
+				video := tgbotapi.NewVideo(tgChatID, tgbotapi.FileBytes{Name: name, Bytes: data})
 				video.Caption = htmlCaption
 				if useHTML {
 					video.ParseMode = "HTML"
@@ -599,7 +628,21 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		case *maxschemes.AudioAttachment:
 			if a.Payload.Url != "" {
-				audio := tgbotapi.NewAudio(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				data, name, err := b.downloadURL(ctx, a.Payload.Url, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+				if err != nil {
+					var e *ErrFileTooLarge
+					if errors.As(err, &e) {
+						slog.Warn("MAX→TG audio too big", "size", e.Size)
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
+								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+						b.maxApi.Messages.Send(ctx, m)
+					} else {
+						slog.Error("MAX→TG audio download failed", "err", err)
+					}
+					break
+				}
+				audio := tgbotapi.NewAudio(tgChatID, tgbotapi.FileBytes{Name: name, Bytes: data})
 				audio.Caption = htmlCaption
 				if useHTML {
 					audio.ParseMode = "HTML"
@@ -610,7 +653,21 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		case *maxschemes.FileAttachment:
 			if a.Payload.Url != "" {
-				doc := tgbotapi.NewDocument(tgChatID, tgbotapi.FileURL(a.Payload.Url))
+				data, name, err := b.downloadURL(ctx, a.Payload.Url, int64(b.cfg.MaxMaxFileSizeMB)*1024*1024)
+				if err != nil {
+					var e *ErrFileTooLarge
+					if errors.As(err, &e) {
+						slog.Warn("MAX→TG file too big", "size", e.Size, "name", e.Name)
+						m := maxbot.NewMessage().SetChat(chatID).SetText(
+							fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
+								e.Name, formatFileSize(int(e.Size)), b.cfg.MaxMaxFileSizeMB))
+						b.maxApi.Messages.Send(ctx, m)
+					} else {
+						slog.Error("MAX→TG file download failed", "err", err)
+					}
+					break
+				}
+				doc := tgbotapi.NewDocument(tgChatID, tgbotapi.FileBytes{Name: name, Bytes: data})
 				doc.Caption = htmlCaption
 				if useHTML {
 					doc.ParseMode = "HTML"

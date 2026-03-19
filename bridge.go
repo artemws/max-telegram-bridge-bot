@@ -16,11 +16,28 @@ import (
 
 // Config — настройки bridge, читаемые из env.
 type Config struct {
-	MaxToken    string // токен MAX API (нужен для direct-send/upload)
-	TgBotURL    string // ссылка на TG-бота для /help
-	MaxBotURL   string // ссылка на MAX-бота для /help
-	WebhookURL  string // базовый URL для webhook (если пусто — long polling)
-	WebhookPort string // порт для webhook сервера
+	MaxToken         string  // токен MAX API (нужен для direct-send/upload)
+	TgBotURL         string  // ссылка на TG-бота для /help
+	MaxBotURL        string  // ссылка на MAX-бота для /help
+	WebhookURL       string  // базовый URL для webhook (если пусто — long polling)
+	WebhookPort      string  // порт для webhook сервера
+	AdminIDs         []int64 // список разрешённых Telegram user ID (пусто = без ограничений)
+	TgMaxFileSizeMB  int     // лимит файла TG→MAX в МБ (0 = без ограничений)
+	MaxMaxFileSizeMB int     // лимит файла MAX→TG в МБ (0 = без ограничений)
+}
+
+// isAllowedUser возвращает true если список AdminIDs пуст (нет ограничений)
+// или если userID присутствует в списке.
+func (c *Config) isAllowedUser(userID int64) bool {
+	if len(c.AdminIDs) == 0 {
+		return true
+	}
+	for _, id := range c.AdminIDs {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 // chatBreaker хранит состояние circuit breaker для одного чата.
