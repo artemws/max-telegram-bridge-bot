@@ -65,6 +65,22 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if edited.From != nil && edited.From.IsBot {
 					continue
 				}
+				maxChatID, linked := b.repo.GetMaxChat(edited.Chat.ID)
+				if !linked {
+					continue
+				}
+
+				// Если edit содержит медиа — отправляем как новое сообщение
+				hasMedia := edited.Photo != nil || edited.Video != nil || edited.Document != nil ||
+					edited.Animation != nil || edited.Sticker != nil || edited.Voice != nil || edited.Audio != nil
+				if hasMedia {
+					prefix := b.repo.HasPrefix("tg", edited.Chat.ID)
+					caption := formatTgCaption(edited, prefix)
+					go b.forwardTgToMax(ctx, edited, maxChatID, caption)
+					continue
+				}
+
+				// Текстовый edit
 				maxMsgID, ok := b.repo.LookupMaxMsgID(edited.Chat.ID, edited.MessageID)
 				if !ok {
 					continue
@@ -74,15 +90,11 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if fwd == "" {
 					continue
 				}
-				maxChatID, linked := b.repo.GetMaxChat(edited.Chat.ID)
-				if !linked {
-					continue
-				}
 				m := maxbot.NewMessage().SetChat(maxChatID).SetText(fwd)
 				if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
-					slog.Error("TG→MAX edit failed", "err", err, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
+					slog.Error("TG→MAX edit failed", "err", err, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
 				} else {
-					slog.Info("TG→MAX edited", "mid", maxMsgID, "uid", edited.From.ID, "tgChat", edited.Chat.ID)
+					slog.Info("TG→MAX edited", "mid", maxMsgID, "uid", tgUserID(edited), "tgChat", edited.Chat.ID)
 				}
 				continue
 			}
