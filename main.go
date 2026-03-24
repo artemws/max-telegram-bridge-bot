@@ -37,8 +37,21 @@ func genKey() string {
 	return hex.EncodeToString(b)
 }
 
+func logLevel() slog.Level {
+	switch os.Getenv("LOG_LEVEL") {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()})))
 
 	cfg := Config{
 		MaxToken:    mustEnv("MAX_TOKEN"),
