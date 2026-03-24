@@ -111,7 +111,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			msg := update.Message
 			text := strings.TrimSpace(msg.Text)
-			slog.Debug("TG msg received", "uid", msg.From.ID, "chat", msg.Chat.ID, "type", msg.Chat.Type)
+			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
 
 			// Запоминаем юзера при личном сообщении
 			if msg.Chat.Type == "private" && msg.From != nil {
@@ -283,6 +283,9 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
 					continue
 				}
+				if !b.isUserAllowed(tgUserID(msg)) {
+					continue
+				}
 				if b.repo.Unpair("tg", msg.Chat.ID) {
 					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Связка удалена."))
 				} else {
@@ -314,13 +317,18 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			// Media group (альбом) — буферизуем и отправляем вместе
 			if msg.MediaGroupID != "" {
+				videoID := ""
+				if msg.Video != nil {
+					videoID = msg.Video.FileID
+				}
 				go b.bufferMediaGroup(ctx, msg.MediaGroupID, mediaGroupItem{
-					photoSizes: msg.Photo,
-					caption:    caption,
-					replyToMsg: msg.ReplyToMessage,
-					entities:   msg.CaptionEntities,
-					msg:        msg,
-				}, maxChatID)
+					photoSizes:  msg.Photo,
+					videoFileID: videoID,
+					caption:     caption,
+					replyToMsg:  msg.ReplyToMessage,
+					entities:    msg.CaptionEntities,
+					msg:         msg,
+				})
 				continue
 			}
 
@@ -595,6 +603,9 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 
 // handleTgCallback обрабатывает нажатия inline-кнопок (crosspost management).
 func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQuery) {
+	if query.Message == nil || query.From == nil {
+		return
+	}
 	data := query.Data
 	chatID := query.Message.Chat.ID
 	msgID := query.Message.MessageID

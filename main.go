@@ -40,7 +40,7 @@ func genKey() string {
 }
 
 func logLevel() slog.Level {
-	switch os.Getenv("LOG_LEVEL") {
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":

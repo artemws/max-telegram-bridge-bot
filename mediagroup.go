@@ -7,6 +7,7 @@ import (
 	"time"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
+	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -15,7 +16,7 @@ const mediaGroupTimeout = 1 * time.Second
 // mediaGroupItem хранит данные одного сообщения из альбома TG.
 type mediaGroupItem struct {
 	photoSizes []tgbotapi.PhotoSize
-	fileID     string // для видео/документов (альбомы могут содержать видео)
+	videoFileID string // для видео в альбомах
 	caption    string
 	replyToMsg *tgbotapi.Message
 	entities   []tgbotapi.MessageEntity
@@ -24,27 +25,27 @@ type mediaGroupItem struct {
 
 // mediaGroupBuffer накапливает сообщения альбома перед отправкой.
 type mediaGroupBuffer struct {
-	mu       sync.Mutex
-	items    []mediaGroupItem
-	chatID   int64 // TG chat ID (для определения maxChatID)
-	timer    *time.Timer
-	fired    bool
+	mu    sync.Mutex
+	items []mediaGroupItem
+	timer *time.Timer
 }
 
 // bufferMediaGroup добавляет сообщение в буфер альбома.
 // Если это первое сообщение — запускает таймер.
-func (b *Bridge) bufferMediaGroup(ctx context.Context, groupID string, item mediaGroupItem, maxChatID int64) {
+func (b *Bridge) bufferMediaGroup(ctx context.Context, groupID string, item mediaGroupItem) {
 	b.mgMu.Lock()
 
 	buf, ok := b.mgBuffers[groupID]
 	if !ok {
-		buf = &mediaGroupBuffer{
-			chatID: item.msg.Chat.ID,
-		}
+		buf = &mediaGroupBuffer{}
 		b.mgBuffers[groupID] = buf
+		// Добавляем первый item до запуска таймера — исключает гонку
+		buf.items = append(buf.items, item)
 		buf.timer = time.AfterFunc(mediaGroupTimeout, func() {
 			b.flushMediaGroup(ctx, groupID)
 		})
+		b.mgMu.Unlock()
+		return
 	}
 
 	b.mgMu.Unlock()
@@ -54,7 +55,7 @@ func (b *Bridge) bufferMediaGroup(ctx context.Context, groupID string, item medi
 	buf.mu.Unlock()
 }
 
-// flushMediaGroup отправляет все накопленные фото альбома одним сообщением в MAX.
+// flushMediaGroup отправляет все накопленные фото/видео альбома одним сообщением в MAX.
 func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 	b.mgMu.Lock()
 	buf, ok := b.mgBuffers[groupID]
@@ -137,28 +138,61 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		}
 	}
 
-	if photosSent == 0 {
-		slog.Warn("media group: no photos uploaded, skipping")
+	// Загружаем видео из альбома через direct API
+	videosSent := 0
+	var videoTokens []string
+	for _, it := range items {
+		if it.videoFileID != "" {
+			uploaded, err := b.uploadTgMediaToMax(ctx, it.videoFileID, maxschemes.VIDEO, "video.mp4")
+			if err != nil {
+				slog.Error("media group: video upload failed", "err", err)
+				continue
+			}
+			videoTokens = append(videoTokens, uploaded.Token)
+			videosSent++
+		}
+	}
+
+	totalMedia := photosSent + videosSent
+	if totalMedia == 0 {
+		slog.Warn("media group: no media uploaded, skipping")
 		return
 	}
 
-	slog.Info("TG→MAX sending media group", "photos", photosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
-	result, err := b.maxApi.Messages.SendWithResult(ctx, m)
-	if err != nil {
-		slog.Error("TG→MAX media group send failed", "err", err, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
-		if b.cbFail(maxChatID) {
-			b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID,
-				"Не удалось переслать альбом в MAX."))
+	slog.Info("TG→MAX sending media group", "photos", photosSent, "videos", videosSent, "uid", uid, "tgChat", items[0].msg.Chat.ID, "maxChat", maxChatID)
+
+	// Если есть фото — отправляем через SDK (поддерживает AddPhoto)
+	if photosSent > 0 {
+		result, err := b.maxApi.Messages.SendWithResult(ctx, m)
+		if err != nil {
+			slog.Error("TG→MAX media group send failed", "err", err)
+			if b.cbFail(maxChatID) {
+				b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID, "Не удалось переслать альбом в MAX."))
+			}
+			// Fallback — по одному
+			for _, it := range items {
+				go b.forwardTgToMax(ctx, it.msg, maxChatID, formatTgCaption(it.msg, prefix))
+			}
+			return
 		}
-		// Отправляем по одному как fallback
-		for _, it := range items {
-			go b.forwardTgToMax(ctx, it.msg, maxChatID, formatTgCaption(it.msg, prefix))
-		}
-		return
+		b.cbSuccess(maxChatID)
+		slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent)
+		b.repo.SaveMsg(items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID, result.Body.Mid)
 	}
 
-	b.cbSuccess(maxChatID)
-	slog.Info("TG→MAX media group sent", "mid", result.Body.Mid, "photos", photosSent)
-	// Сохраняем маппинг для первого сообщения группы (для reply)
-	b.repo.SaveMsg(items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID, result.Body.Mid)
+	// Видео отправляем отдельно через direct API (SDK не поддерживает AddVideo)
+	for i, token := range videoTokens {
+		videoCaption := ""
+		if i == 0 && photosSent == 0 {
+			videoCaption = mdCaption // caption на первое видео если нет фото
+		}
+		mid, err := b.sendMaxDirectFormatted(ctx, maxChatID, videoCaption, "video", token, "", "")
+		if err != nil {
+			slog.Error("TG→MAX media group video send failed", "err", err)
+			continue
+		}
+		if i == 0 && photosSent == 0 {
+			b.repo.SaveMsg(items[0].msg.Chat.ID, items[0].msg.MessageID, maxChatID, mid)
+		}
+	}
 }

@@ -10,6 +10,12 @@ import (
 )
 
 func tgName(msg *tgbotapi.Message) string {
+	if msg.From == nil {
+		if msg.SenderChat != nil {
+			return msg.SenderChat.Title
+		}
+		return "Unknown"
+	}
 	name := msg.From.FirstName
 	if msg.From.LastName != "" {
 		name += " " + msg.From.LastName
