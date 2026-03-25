@@ -128,12 +128,27 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 				slog.Error("media group: tgFileURL failed", "err", err)
 				continue
 			}
-			uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL)
-			if err != nil {
-				slog.Error("media group: photo upload failed", "err", err)
-				continue
+			// Если custom TG API — MAX не может скачать по URL, скачиваем сами
+			if b.cfg.TgAPIURL != "" {
+				uploaded, err := b.uploadTgMediaToMax(ctx, photo.FileID, maxschemes.PHOTO, "photo.jpg")
+				if err != nil {
+					slog.Error("media group: photo upload failed", "err", err)
+					continue
+				}
+				// AddPhoto требует PhotoTokens, а у нас UploadedInfo — используем workaround
+				m.AddPhoto(&maxschemes.PhotoTokens{
+					Photos: map[string]maxschemes.PhotoToken{
+						uploaded.Token: {Token: uploaded.Token},
+					},
+				})
+			} else {
+				uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL)
+				if err != nil {
+					slog.Error("media group: photo upload failed", "err", err)
+					continue
+				}
+				m.AddPhoto(uploaded)
 			}
-			m.AddPhoto(uploaded)
 			photosSent++
 		}
 	}

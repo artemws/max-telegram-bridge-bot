@@ -357,10 +357,20 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 	var mediaAttType string // "video", "file", "audio"
 
 	if msg.Photo != nil {
-		// Фото — через SDK (работает)
 		photo := msg.Photo[len(msg.Photo)-1]
 		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
-		if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
+		if b.cfg.TgAPIURL != "" {
+			// Custom TG API — MAX не может скачать по URL, загружаем сами
+			if uploaded, err := b.uploadTgMediaToMax(ctx, photo.FileID, maxschemes.PHOTO, "photo.jpg"); err == nil {
+				m.AddPhoto(&maxschemes.PhotoTokens{
+					Photos: map[string]maxschemes.PhotoToken{
+						uploaded.Token: {Token: uploaded.Token},
+					},
+				})
+			} else {
+				slog.Error("TG→MAX photo upload failed", "err", err)
+			}
+		} else if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 				m.AddPhoto(uploaded)
 			} else {
