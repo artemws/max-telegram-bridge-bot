@@ -253,6 +253,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			// Проверка прав админа в группах
 			isGroup := isTgGroup(msg.Chat.Type)
 			isAdmin := false
+			adminCheckFailed := false
 			if isGroup && msg.From != nil {
 				member, err := b.tgBot.GetChatMember(tgbotapi.GetChatMemberConfig{
 					ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
@@ -260,7 +261,11 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						UserID: msg.From.ID,
 					},
 				})
-				if err == nil {
+				if err != nil {
+					slog.Warn("TG GetChatMember failed", "err", err, "chat", msg.Chat.ID, "user", msg.From.ID)
+					adminCheckFailed = true
+				} else {
+					slog.Debug("TG GetChatMember", "status", member.Status, "user", msg.From.ID)
 					isAdmin = isTgAdmin(member.Status)
 				}
 			}
@@ -271,7 +276,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, tgAdminCheckMsg(adminCheckFailed)))
 					continue
 				}
 				on := text == "/bridge prefix on"
@@ -293,7 +298,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, tgAdminCheckMsg(adminCheckFailed)))
 					continue
 				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
@@ -320,7 +325,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 
 			if text == "/unbridge" {
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, tgAdminCheckMsg(adminCheckFailed)))
 					continue
 				}
 				if !b.checkUserAllowed(msg.Chat.ID, tgUserID(msg)) {
