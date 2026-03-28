@@ -28,6 +28,9 @@ type Config struct {
 	// MaxAllowedExts — whitelist расширений для TG→MAX (nil = не проверять локально).
 	// Если задан, файлы с не-вхождением блокируются до отправки на CDN.
 	MaxAllowedExts map[string]struct{}
+	// MessageNewline — если true, текст идёт с новой строки после имени отправителя:
+	// "Имя:\nтекст" вместо "Имя: текст". Задаётся через env MESSAGE_FORMAT=newline.
+	MessageNewline bool
 }
 
 // chatBreaker хранит состояние circuit breaker для одного чата.
