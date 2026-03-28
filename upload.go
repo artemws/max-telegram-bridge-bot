@@ -150,6 +150,16 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 	cdnBody, _ := io.ReadAll(cdnResp.Body)
 	slog.Debug("MAX CDN response", "status", cdnResp.StatusCode, "body", string(cdnBody))
 
+	// Проверяем ошибку запрещённого расширения
+	var apiErr struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(cdnBody, &apiErr) == nil && apiErr.Code == "upload.error" {
+		slog.Warn("MAX upload rejected", "code", apiErr.Code, "message", apiErr.Message, "file", fileName)
+		return nil, &ErrForbiddenExtension{Name: fileName}
+	}
+
 	// 3. Парсим CDN ответ (fileId в camelCase)
 	var cdnResult struct {
 		FileID int64  `json:"fileId"`
@@ -323,6 +333,15 @@ type ErrFileTooLarge struct {
 
 func (e *ErrFileTooLarge) Error() string {
 	return fmt.Sprintf("file too large: %s (%s)", e.Name, formatFileSize(int(e.Size)))
+}
+
+// ErrForbiddenExtension is returned when MAX API rejects the file extension.
+type ErrForbiddenExtension struct {
+	Name string
+}
+
+func (e *ErrForbiddenExtension) Error() string {
+	return fmt.Sprintf("file extension forbidden by MAX: %s", e.Name)
 }
 
 // downloadURLWithLimit downloads a file from URL with an optional size limit.
