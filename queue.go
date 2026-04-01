@@ -182,6 +182,12 @@ func (b *Bridge) processQueueMax2Tg(item QueueItem, now time.Time) {
 	}
 
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "TOPIC_CLOSED") || strings.Contains(errStr, "403") || strings.Contains(errStr, "chat not found") {
+			slog.Warn("queue item dropped (permanent error)", "id", item.ID, "dir", "max2tg", "err", errStr)
+			b.repo.DeleteFromQueue(item.ID)
+			return
+		}
 		slog.Warn("queue retry failed", "id", item.ID, "dir", "max2tg", "attempt", item.Attempts+1, "err", err)
 		b.repo.IncrementAttempt(item.ID, now.Add(retryDelay(item.Attempts+1)).Unix())
 		return
