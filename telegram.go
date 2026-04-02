@@ -123,6 +123,17 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			text := strings.TrimSpace(msg.Text)
+			// Убираем @botname из команд: /bridge@MaxTelegramBridgeBot → /bridge
+			if strings.HasPrefix(text, "/") {
+				if at := strings.Index(text, "@"); at > 0 {
+					rest := text[at:]
+					if sp := strings.IndexByte(rest, ' '); sp > 0 {
+						text = text[:at] + rest[sp:]
+					} else {
+						text = text[:at]
+					}
+				}
+			}
 			slog.Debug("TG msg received", "uid", tgUserID(msg), "chat", msg.Chat.ID, "type", msg.Chat.Type)
 
 			// Запоминаем юзера при личном сообщении
