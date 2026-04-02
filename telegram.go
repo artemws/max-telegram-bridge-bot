@@ -148,7 +148,8 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						"/bridge — создать ключ для связки чатов\n"+
 						"/bridge <ключ> — связать этот чат с MAX-чатом по ключу\n"+
 						"/bridge prefix on/off — включить/выключить префикс [TG]/[MAX]\n"+
-						"/unbridge — удалить связку\n\n"+
+						"/unbridge — удалить связку\n"+
+						"/thread — направить сообщения из MAX в текущий топик (форум)\n\n"+
 						"Кросспостинг каналов:\n"+
 						"1. Добавьте бота админом в оба канала (с правом постинга)\n"+
 						"2. Перешлите пост из TG-канала в личку TG-бота\n"+
@@ -270,6 +271,32 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if err == nil {
 					isAdmin = isTgAdmin(status)
 				}
+			}
+
+			// /thread — установить/сбросить топик по умолчанию
+			if text == "/thread" {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
+					continue
+				}
+				if isGroup && !isAdmin {
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Эта команда доступна только админам группы.", &SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if _, ok := b.repo.GetMaxChat(msg.Chat.ID); !ok {
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Чат не связан. Сначала выполните /bridge.", &SendOpts{ThreadID: msg.MessageThreadID})
+					continue
+				}
+				if msg.MessageThreadID != 0 {
+					b.repo.SetTgThreadID(msg.Chat.ID, msg.MessageThreadID)
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						fmt.Sprintf("Топик по умолчанию установлен (thread %d). Сообщения из MAX будут приходить сюда.", msg.MessageThreadID),
+						&SendOpts{ThreadID: msg.MessageThreadID})
+				} else {
+					b.repo.SetTgThreadID(msg.Chat.ID, 0)
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Топик сброшен. Сообщения из MAX будут приходить в основной чат.", &SendOpts{})
+				}
+				slog.Info("thread set", "tgChat", msg.Chat.ID, "thread", msg.MessageThreadID, "uid", tgUserID(msg))
+				continue
 			}
 
 			// /bridge prefix on/off

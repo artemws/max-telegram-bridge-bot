@@ -209,6 +209,7 @@ func (b *Bridge) registerCommands(ctx context.Context) {
 	cmds := []BotCommand{
 		{Command: "bridge", Description: "Связать чат с MAX-чатом"},
 		{Command: "unbridge", Description: "Удалить связку чатов"},
+		{Command: "thread", Description: "Установить топик для сообщений из MAX"},
 		{Command: "crosspost", Description: "Список связок кросспостинга"},
 		{Command: "help", Description: "Инструкция"},
 	}
