@@ -452,7 +452,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		if checkSize(photo.FileSize, "") {
 			return
 		}
-		m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
+		// Конвертируем entities в markdown для caption фото
+		photoEntities := msg.CaptionEntities
+		mdCaption := tgEntitiesToMarkdown(caption, photoEntities)
+		m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
+		if mdCaption != caption {
+			m.SetFormat("markdown")
+		}
 		if b.cfg.TgAPIURL != "" {
 			// Custom TG API — MAX не может скачать по URL, скачиваем и загружаем через reader
 			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
@@ -473,7 +479,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		}
 		if msg.ReplyToMessage != nil {
 			if maxReplyID, ok := b.repo.LookupMaxMsgID(msg.Chat.ID, msg.ReplyToMessage.MessageID); ok {
-				m.SetReply(caption, maxReplyID)
+				m.SetReply(mdCaption, maxReplyID)
 			}
 		}
 		slog.Info("TG→MAX sending photo", "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)

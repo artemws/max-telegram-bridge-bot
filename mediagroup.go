@@ -121,6 +121,9 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 	}
 
 	m := maxbot.NewMessage().SetChat(maxChatID).SetText(mdCaption)
+	if mdCaption != caption {
+		m.SetFormat("markdown")
+	}
 	if replyTo != "" {
 		m.SetReply(mdCaption, replyTo)
 	}
