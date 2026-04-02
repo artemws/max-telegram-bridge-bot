@@ -23,7 +23,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			slog.Error("TG set webhook failed", "err", err)
 			return
 		}
-		updates = b.tg.StartWebhook(whPath)
+		updates = b.tg.StartWebhook(ctx, whPath)
 		slog.Info("TG webhook mode")
 	} else {
 		// Удаляем webhook если был, переключаемся на polling

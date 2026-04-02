@@ -190,7 +190,7 @@ type TGSender interface {
 
 	SetWebhook(ctx context.Context, url string) error
 	DeleteWebhook(ctx context.Context) error
-	StartWebhook(path string) <-chan TGUpdate
+	StartWebhook(ctx context.Context, path string) <-chan TGUpdate
 	StartPolling(ctx context.Context) <-chan TGUpdate
 
 	BotUsername() string

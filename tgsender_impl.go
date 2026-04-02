@@ -68,8 +68,9 @@ func (s *tgBotSender) StartPolling(ctx context.Context) <-chan TGUpdate {
 	return s.updates
 }
 
-func (s *tgBotSender) StartWebhook(path string) <-chan TGUpdate {
+func (s *tgBotSender) StartWebhook(ctx context.Context, path string) <-chan TGUpdate {
 	http.HandleFunc(path, s.b.WebhookHandler())
+	go s.b.StartWebhook(ctx) // start workers that dispatch updates to handlers
 	return s.updates
 }
 
