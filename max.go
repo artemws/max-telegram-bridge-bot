@@ -54,6 +54,10 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if !ok {
 					continue
 				}
+				// Crosspost direction check: если direction = "tg>max", удаление из MAX не должно удалять в TG
+				if _, dir, cpOk := b.repo.GetCrosspostMaxChat(tgChatID); cpOk && dir == "tg>max" {
+					continue
+				}
 				if err := b.tg.DeleteMessage(ctx, tgChatID, tgMsgID); err != nil {
 					slog.Error("MAX→TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
 				} else {
@@ -70,6 +74,10 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				mid := editUpd.Message.Body.Mid
 				tgChatID, tgMsgID, ok := b.repo.LookupTgMsgID(mid)
 				if !ok {
+					continue
+				}
+				// Crosspost direction check: если direction = "tg>max", edit из MAX не должен обновлять TG
+				if _, dir, cpOk := b.repo.GetCrosspostMaxChat(tgChatID); cpOk && dir == "tg>max" {
 					continue
 				}
 				prefix := b.repo.HasPrefix("max", editUpd.Message.Recipient.ChatId)
