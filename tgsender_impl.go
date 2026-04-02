@@ -1,0 +1,599 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
+)
+
+type tgBotSender struct {
+	b        *bot.Bot
+	token    string
+	username string
+	apiURL   string
+	updates  chan TGUpdate
+}
+
+func NewTGBotSender(ctx context.Context, token, apiURL string) (*tgBotSender, error) {
+	s := &tgBotSender{
+		token:   token,
+		apiURL:  apiURL,
+		updates: make(chan TGUpdate, 100),
+	}
+
+	opts := []bot.Option{
+		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
+			tgu := convertUpdate(update)
+			select {
+			case s.updates <- tgu:
+			default:
+				slog.Warn("TG update channel full, dropping update")
+			}
+		}),
+	}
+	if apiURL != "" {
+		opts = append(opts, bot.WithServerURL(apiURL))
+	}
+	opts = append(opts, bot.WithSkipGetMe())
+
+	b, err := bot.New(token, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("bot.New: %w", err)
+	}
+	s.b = b
+
+	me, err := b.GetMe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("TG getMe: %w", err)
+	}
+	s.username = me.Username
+	slog.Info("Telegram bot started", "username", me.Username)
+
+	return s, nil
+}
+
+func (s *tgBotSender) BotUsername() string { return s.username }
+func (s *tgBotSender) BotToken() string    { return s.token }
+
+// --- Updates ---
+
+func (s *tgBotSender) StartPolling(ctx context.Context) <-chan TGUpdate {
+	go s.b.Start(ctx)
+	return s.updates
+}
+
+func (s *tgBotSender) StartWebhook(path string) <-chan TGUpdate {
+	http.HandleFunc(path, s.b.WebhookHandler())
+	return s.updates
+}
+
+func (s *tgBotSender) SetWebhook(ctx context.Context, url string) error {
+	_, err := s.b.SetWebhook(ctx, &bot.SetWebhookParams{URL: url})
+	return wrapErr(err)
+}
+
+func (s *tgBotSender) DeleteWebhook(ctx context.Context) error {
+	_, err := s.b.DeleteWebhook(ctx, &bot.DeleteWebhookParams{})
+	return wrapErr(err)
+}
+
+// --- Send ---
+
+func (s *tgBotSender) SendMessage(ctx context.Context, chatID int64, text string, opts *SendOpts) (int, error) {
+	p := &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}
+	applySendMessageOpts(p, opts)
+	msg, err := s.b.SendMessage(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+func (s *tgBotSender) SendPhoto(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
+	p := &bot.SendPhotoParams{
+		ChatID: chatID,
+		Photo:  toInputFile(file),
+	}
+	applySendPhotoOpts(p, opts)
+	msg, err := s.b.SendPhoto(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+func (s *tgBotSender) SendVideo(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
+	p := &bot.SendVideoParams{
+		ChatID: chatID,
+		Video:  toInputFile(file),
+	}
+	applySendVideoOpts(p, opts)
+	msg, err := s.b.SendVideo(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+func (s *tgBotSender) SendAudio(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
+	p := &bot.SendAudioParams{
+		ChatID: chatID,
+		Audio:  toInputFile(file),
+	}
+	applySendAudioOpts(p, opts)
+	msg, err := s.b.SendAudio(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+func (s *tgBotSender) SendDocument(ctx context.Context, chatID int64, file FileArg, opts *SendOpts) (int, error) {
+	p := &bot.SendDocumentParams{
+		ChatID:   chatID,
+		Document: toInputFile(file),
+	}
+	applySendDocumentOpts(p, opts)
+	msg, err := s.b.SendDocument(ctx, p)
+	if err != nil {
+		return 0, wrapErr(err)
+	}
+	return msg.ID, nil
+}
+
+func (s *tgBotSender) SendMediaGroup(ctx context.Context, chatID int64, media []TGInputMedia, opts *SendOpts) ([]int, error) {
+	items := make([]models.InputMedia, 0, len(media))
+	for _, m := range media {
+		items = append(items, toLibInputMedia(m))
+	}
+	p := &bot.SendMediaGroupParams{
+		ChatID: chatID,
+		Media:  items,
+	}
+	if opts != nil {
+		if opts.ThreadID != 0 {
+			p.MessageThreadID = opts.ThreadID
+		}
+		if opts.ReplyToID != 0 {
+			p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+		}
+	}
+	msgs, err := s.b.SendMediaGroup(ctx, p)
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+	ids := make([]int, len(msgs))
+	for i, m := range msgs {
+		ids[i] = m.ID
+	}
+	return ids, nil
+}
+
+// --- Edit ---
+
+func (s *tgBotSender) EditMessageText(ctx context.Context, chatID int64, msgID int, text string, opts *SendOpts) error {
+	p := &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: msgID,
+		Text:      text,
+	}
+	if opts != nil {
+		if opts.ParseMode != "" {
+			p.ParseMode = models.ParseMode(opts.ParseMode)
+		}
+		if opts.ReplyMarkup != nil {
+			p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+		}
+	}
+	_, err := s.b.EditMessageText(ctx, p)
+	return wrapErr(err)
+}
+
+func (s *tgBotSender) EditMessageMedia(ctx context.Context, chatID int64, msgID int, media TGInputMedia) error {
+	p := &bot.EditMessageMediaParams{
+		ChatID:    chatID,
+		MessageID: msgID,
+		Media:     toLibInputMedia(media),
+	}
+	_, err := s.b.EditMessageMedia(ctx, p)
+	return wrapErr(err)
+}
+
+// --- Other ---
+
+func (s *tgBotSender) DeleteMessage(ctx context.Context, chatID int64, msgID int) error {
+	_, err := s.b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    chatID,
+		MessageID: msgID,
+	})
+	return wrapErr(err)
+}
+
+func (s *tgBotSender) AnswerCallback(ctx context.Context, callbackID string, text string) error {
+	_, err := s.b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callbackID,
+		Text:            text,
+	})
+	return wrapErr(err)
+}
+
+func (s *tgBotSender) GetFile(ctx context.Context, fileID string) (string, error) {
+	f, err := s.b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
+	if err != nil {
+		return "", wrapErr(err)
+	}
+	return f.FilePath, nil
+}
+
+func (s *tgBotSender) GetFileDirectURL(filePath string) string {
+	if s.apiURL != "" {
+		return s.apiURL + "/" + filePath
+	}
+	return "https://api.telegram.org/file/bot" + s.token + "/" + filePath
+}
+
+func (s *tgBotSender) GetChatMember(ctx context.Context, chatID, userID int64) (string, error) {
+	m, err := s.b.GetChatMember(ctx, &bot.GetChatMemberParams{
+		ChatID: chatID,
+		UserID: userID,
+	})
+	if err != nil {
+		return "", wrapErr(err)
+	}
+	return string(m.Type), nil
+}
+
+func (s *tgBotSender) SetMyCommands(ctx context.Context, commands []BotCommand, scope *CommandScope) error {
+	cmds := make([]models.BotCommand, len(commands))
+	for i, c := range commands {
+		cmds[i] = models.BotCommand{Command: c.Command, Description: c.Description}
+	}
+	p := &bot.SetMyCommandsParams{Commands: cmds}
+	if scope != nil && scope.Type == "all_chat_administrators" {
+		p.Scope = &models.BotCommandScopeAllChatAdministrators{}
+	}
+	_, err := s.b.SetMyCommands(ctx, p)
+	return wrapErr(err)
+}
+
+func (s *tgBotSender) GetChat(ctx context.Context, chatID int64) (string, error) {
+	chat, err := s.b.GetChat(ctx, &bot.GetChatParams{ChatID: chatID})
+	if err != nil {
+		return "", wrapErr(err)
+	}
+	return chat.Title, nil
+}
+
+// --- Conversion helpers ---
+
+func toInputFile(f FileArg) models.InputFile {
+	if f.URL != "" {
+		return &models.InputFileString{Data: f.URL}
+	}
+	name := f.Name
+	if name == "" {
+		name = "file"
+	}
+	return &models.InputFileUpload{Filename: name, Data: bytes.NewReader(f.Bytes)}
+}
+
+func toLibInputMedia(m TGInputMedia) models.InputMedia {
+	pm := models.ParseMode(m.ParseMode)
+
+	// InputMedia structs use string Media field (URL or file_id) plus
+	// an io.Reader MediaAttachment for uploads.
+	if m.File.URL != "" {
+		// URL or file_id — set Media string directly, no attachment.
+		switch m.Type {
+		case "video":
+			return &models.InputMediaVideo{Media: m.File.URL, Caption: m.Caption, ParseMode: pm}
+		case "audio":
+			return &models.InputMediaAudio{Media: m.File.URL, Caption: m.Caption, ParseMode: pm}
+		case "document":
+			return &models.InputMediaDocument{Media: m.File.URL, Caption: m.Caption, ParseMode: pm}
+		default:
+			return &models.InputMediaPhoto{Media: m.File.URL, Caption: m.Caption, ParseMode: pm}
+		}
+	}
+
+	// Upload — use attach:// protocol with MediaAttachment reader.
+	name := m.File.Name
+	if name == "" {
+		name = "file"
+	}
+	media := "attach://" + name
+	reader := bytes.NewReader(m.File.Bytes)
+	switch m.Type {
+	case "video":
+		return &models.InputMediaVideo{Media: media, Caption: m.Caption, ParseMode: pm, MediaAttachment: reader}
+	case "audio":
+		return &models.InputMediaAudio{Media: media, Caption: m.Caption, ParseMode: pm, MediaAttachment: reader}
+	case "document":
+		return &models.InputMediaDocument{Media: media, Caption: m.Caption, ParseMode: pm, MediaAttachment: reader}
+	default:
+		return &models.InputMediaPhoto{Media: media, Caption: m.Caption, ParseMode: pm, MediaAttachment: reader}
+	}
+}
+
+func toLibKeyboard(kb *InlineKeyboardMarkup) *models.InlineKeyboardMarkup {
+	if kb == nil {
+		return nil
+	}
+	rows := make([][]models.InlineKeyboardButton, len(kb.Rows))
+	for i, row := range kb.Rows {
+		btns := make([]models.InlineKeyboardButton, len(row))
+		for j, b := range row {
+			btns[j] = models.InlineKeyboardButton{Text: b.Text, CallbackData: b.CallbackData}
+		}
+		rows[i] = btns
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// --- Apply opts helpers ---
+
+func applySendMessageOpts(p *bot.SendMessageParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+func applySendPhotoOpts(p *bot.SendPhotoParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.Caption != "" {
+		p.Caption = opts.Caption
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+func applySendVideoOpts(p *bot.SendVideoParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.Caption != "" {
+		p.Caption = opts.Caption
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+func applySendAudioOpts(p *bot.SendAudioParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.Caption != "" {
+		p.Caption = opts.Caption
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+func applySendDocumentOpts(p *bot.SendDocumentParams, opts *SendOpts) {
+	if opts == nil {
+		return
+	}
+	if opts.ThreadID != 0 {
+		p.MessageThreadID = opts.ThreadID
+	}
+	if opts.Caption != "" {
+		p.Caption = opts.Caption
+	}
+	if opts.ParseMode != "" {
+		p.ParseMode = models.ParseMode(opts.ParseMode)
+	}
+	if opts.ReplyToID != 0 {
+		p.ReplyParameters = &models.ReplyParameters{MessageID: opts.ReplyToID}
+	}
+	if opts.ReplyMarkup != nil {
+		p.ReplyMarkup = toLibKeyboard(opts.ReplyMarkup)
+	}
+}
+
+// --- Error wrapping ---
+
+func wrapErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var me *bot.MigrateError
+	if errors.As(err, &me) {
+		return &TGError{
+			Code:            400,
+			Description:     me.Message,
+			MigrateToChatID: int64(me.MigrateToChatID),
+		}
+	}
+	if errors.Is(err, bot.ErrorForbidden) {
+		return &TGError{Code: 403, Description: err.Error()}
+	}
+	if errors.Is(err, bot.ErrorBadRequest) {
+		return &TGError{Code: 400, Description: err.Error()}
+	}
+	if errors.Is(err, bot.ErrorNotFound) {
+		return &TGError{Code: 404, Description: err.Error()}
+	}
+	var tmr *bot.TooManyRequestsError
+	if errors.As(err, &tmr) {
+		return &TGError{Code: 429, Description: tmr.Error()}
+	}
+	return err
+}
+
+// --- Update conversion ---
+
+func convertUpdate(u *models.Update) TGUpdate {
+	return TGUpdate{
+		Message:           convertMsg(u.Message),
+		EditedMessage:     convertMsg(u.EditedMessage),
+		ChannelPost:       convertMsg(u.ChannelPost),
+		EditedChannelPost: convertMsg(u.EditedChannelPost),
+		CallbackQuery:     convertCallback(u.CallbackQuery),
+	}
+}
+
+func convertMsg(m *models.Message) *TGMessage {
+	if m == nil {
+		return nil
+	}
+	msg := &TGMessage{
+		MessageID:       m.ID,
+		MessageThreadID: m.MessageThreadID,
+		Chat: ChatInfo{
+			ID:    m.Chat.ID,
+			Type:  string(m.Chat.Type),
+			Title: m.Chat.Title,
+		},
+		Text:            m.Text,
+		Caption:         m.Caption,
+		MediaGroupID:    m.MediaGroupID,
+		MigrateToChatID: m.MigrateToChatID,
+	}
+
+	if m.From != nil {
+		msg.From = &UserInfo{
+			ID:        m.From.ID,
+			IsBot:     m.From.IsBot,
+			UserName:  m.From.Username,
+			FirstName: m.From.FirstName,
+			LastName:  m.From.LastName,
+		}
+	}
+
+	if m.SenderChat != nil {
+		msg.SenderChat = &ChatInfo{
+			ID:    m.SenderChat.ID,
+			Type:  string(m.SenderChat.Type),
+			Title: m.SenderChat.Title,
+		}
+	}
+
+	// ForwardOrigin -> ForwardOriginChat (for channel forwards)
+	if m.ForwardOrigin != nil && m.ForwardOrigin.MessageOriginChannel != nil {
+		ch := m.ForwardOrigin.MessageOriginChannel.Chat
+		msg.ForwardOriginChat = &ChatInfo{
+			ID:    ch.ID,
+			Type:  string(ch.Type),
+			Title: ch.Title,
+		}
+	}
+
+	// Photo
+	for _, p := range m.Photo {
+		msg.Photo = append(msg.Photo, PhotoSize{
+			FileID:   p.FileID,
+			FileSize: p.FileSize,
+		})
+	}
+
+	if m.Video != nil {
+		msg.Video = &FileInfo{FileID: m.Video.FileID, FileName: m.Video.FileName, FileSize: int(m.Video.FileSize)}
+	}
+	if m.Document != nil {
+		msg.Document = &DocInfo{FileID: m.Document.FileID, FileName: m.Document.FileName, FileSize: int(m.Document.FileSize), MimeType: m.Document.MimeType}
+	}
+	if m.Animation != nil {
+		msg.Animation = &FileInfo{FileID: m.Animation.FileID, FileName: m.Animation.FileName, FileSize: int(m.Animation.FileSize)}
+	}
+	if m.Sticker != nil {
+		msg.Sticker = &StickerInfo{FileID: m.Sticker.FileID, FileSize: m.Sticker.FileSize, IsAnimated: m.Sticker.IsAnimated}
+	}
+	if m.Voice != nil {
+		msg.Voice = &FileInfo{FileID: m.Voice.FileID, FileSize: int(m.Voice.FileSize)}
+	}
+	if m.Audio != nil {
+		msg.Audio = &AudioInfo{FileID: m.Audio.FileID, FileName: m.Audio.FileName, FileSize: int(m.Audio.FileSize)}
+	}
+	if m.VideoNote != nil {
+		msg.VideoNote = &FileInfo{FileID: m.VideoNote.FileID, FileSize: m.VideoNote.FileSize}
+	}
+
+	if m.ReplyToMessage != nil {
+		msg.ReplyToMessage = convertMsg(m.ReplyToMessage)
+	}
+
+	for _, e := range m.Entities {
+		msg.Entities = append(msg.Entities, Entity{Type: string(e.Type), Offset: e.Offset, Length: e.Length, URL: e.URL})
+	}
+	for _, e := range m.CaptionEntities {
+		msg.CaptionEntities = append(msg.CaptionEntities, Entity{Type: string(e.Type), Offset: e.Offset, Length: e.Length, URL: e.URL})
+	}
+
+	return msg
+}
+
+func convertCallback(cb *models.CallbackQuery) *TGCallback {
+	if cb == nil {
+		return nil
+	}
+	c := &TGCallback{
+		ID:   cb.ID,
+		Data: cb.Data,
+	}
+	if cb.From.ID != 0 {
+		c.From = &UserInfo{
+			ID:        cb.From.ID,
+			IsBot:     cb.From.IsBot,
+			UserName:  cb.From.Username,
+			FirstName: cb.From.FirstName,
+			LastName:  cb.From.LastName,
+		}
+	}
+	if cb.Message.Message != nil {
+		c.Message = convertMsg(cb.Message.Message)
+	}
+	return c
+}

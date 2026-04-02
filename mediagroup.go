@@ -9,19 +9,18 @@ import (
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const mediaGroupTimeout = 1 * time.Second
 
 // mediaGroupItem хранит данные одного сообщения из альбома TG.
 type mediaGroupItem struct {
-	photoSizes  []tgbotapi.PhotoSize
+	photoSizes  []PhotoSize
 	videoFileID string // для видео в альбомах
 	caption     string
-	replyToMsg  *tgbotapi.Message
-	entities    []tgbotapi.MessageEntity
-	msg         *tgbotapi.Message
+	replyToMsg  *TGMessage
+	entities    []Entity
+	msg         *TGMessage
 	maxChatID   int64 // если задан — используется напрямую (crosspost)
 	crosspost   bool  // кросспостинг: без prefix, другой caption формат
 }
@@ -95,7 +94,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 
 	// Caption и entities берём из первого элемента, у которого caption не пустой
 	var caption string
-	var entities []tgbotapi.MessageEntity
+	var entities []Entity
 	for _, it := range items {
 		if it.caption != "" {
 			caption = it.caption
@@ -131,7 +130,7 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 	for _, it := range items {
 		if len(it.photoSizes) > 0 {
 			photo := it.photoSizes[len(it.photoSizes)-1]
-			fileURL, err := b.tgFileURL(photo.FileID)
+			fileURL, err := b.tgFileURL(ctx, photo.FileID)
 			if err != nil {
 				slog.Error("media group: tgFileURL failed", "err", err)
 				continue
@@ -185,8 +184,8 @@ func (b *Bridge) flushMediaGroup(ctx context.Context, groupID string) {
 		if err != nil {
 			slog.Error("TG→MAX media group send failed", "err", err)
 			if b.cbFail(maxChatID) {
-				b.tgBot.Send(tgbotapi.NewMessage(items[0].msg.Chat.ID,
-					fmt.Sprintf("Не удалось переслать альбом в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
+				b.tg.SendMessage(ctx, items[0].msg.Chat.ID,
+					fmt.Sprintf("Не удалось переслать альбом в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes())), nil)
 			}
 			// Fallback — по одному
 			for _, it := range items {

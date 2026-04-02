@@ -4,26 +4,25 @@ import (
 	"testing"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TestTgName(t *testing.T) {
 	tests := []struct {
 		name     string
-		msg      *tgbotapi.Message
+		msg      *TGMessage
 		expected string
 	}{
 		{
 			name: "first name only",
-			msg: &tgbotapi.Message{
-				From: &tgbotapi.User{FirstName: "Ivan"},
+			msg: &TGMessage{
+				From: &UserInfo{FirstName: "Ivan"},
 			},
 			expected: "Ivan",
 		},
 		{
 			name: "first and last name",
-			msg: &tgbotapi.Message{
-				From: &tgbotapi.User{FirstName: "Ivan", LastName: "Petrov"},
+			msg: &TGMessage{
+				From: &UserInfo{FirstName: "Ivan", LastName: "Petrov"},
 			},
 			expected: "Ivan Petrov",
 		},
@@ -40,9 +39,9 @@ func TestTgName(t *testing.T) {
 }
 
 func TestFormatTgCaption(t *testing.T) {
-	msg := &tgbotapi.Message{
+	msg := &TGMessage{
 		Text: "hello world",
-		From: &tgbotapi.User{FirstName: "Anna"},
+		From: &UserInfo{FirstName: "Anna"},
 	}
 
 	tests := []struct {
@@ -65,10 +64,10 @@ func TestFormatTgCaption(t *testing.T) {
 }
 
 func TestFormatTgCaption_UsesCaption(t *testing.T) {
-	msg := &tgbotapi.Message{
+	msg := &TGMessage{
 		Text:    "",
 		Caption: "photo caption",
-		From:    &tgbotapi.User{FirstName: "Bob"},
+		From:    &UserInfo{FirstName: "Bob"},
 	}
 
 	got := formatTgCaption(msg, false, false)
@@ -81,43 +80,43 @@ func TestFormatTgCaption_UsesCaption(t *testing.T) {
 func TestFormatTgMessage(t *testing.T) {
 	tests := []struct {
 		name     string
-		msg      *tgbotapi.Message
+		msg      *TGMessage
 		prefix   bool
 		expected string
 	}{
 		{
 			name: "text with prefix",
-			msg: &tgbotapi.Message{
+			msg: &TGMessage{
 				Text: "edited text",
-				From: &tgbotapi.User{FirstName: "Ivan"},
+				From: &UserInfo{FirstName: "Ivan"},
 			},
 			prefix:   true,
 			expected: "[TG] Ivan: edited text",
 		},
 		{
 			name: "text without prefix",
-			msg: &tgbotapi.Message{
+			msg: &TGMessage{
 				Text: "edited text",
-				From: &tgbotapi.User{FirstName: "Ivan"},
+				From: &UserInfo{FirstName: "Ivan"},
 			},
 			prefix:   false,
 			expected: "Ivan: edited text",
 		},
 		{
 			name: "empty text returns empty",
-			msg: &tgbotapi.Message{
+			msg: &TGMessage{
 				Text: "",
-				From: &tgbotapi.User{FirstName: "Ivan"},
+				From: &UserInfo{FirstName: "Ivan"},
 			},
 			prefix:   true,
 			expected: "",
 		},
 		{
 			name: "caption fallback",
-			msg: &tgbotapi.Message{
+			msg: &TGMessage{
 				Text:    "",
 				Caption: "cap",
-				From:    &tgbotapi.User{FirstName: "Ivan"},
+				From:    &UserInfo{FirstName: "Ivan"},
 			},
 			prefix:   false,
 			expected: "Ivan: cap",
@@ -200,22 +199,22 @@ func TestFormatMaxCaption(t *testing.T) {
 func TestFormatTgCrosspostCaption(t *testing.T) {
 	tests := []struct {
 		name     string
-		msg      *tgbotapi.Message
+		msg      *TGMessage
 		expected string
 	}{
 		{
 			name:     "text",
-			msg:      &tgbotapi.Message{Text: "Новый пост"},
+			msg:      &TGMessage{Text: "Новый пост"},
 			expected: "Новый пост",
 		},
 		{
 			name:     "caption fallback",
-			msg:      &tgbotapi.Message{Text: "", Caption: "фото"},
+			msg:      &TGMessage{Text: "", Caption: "фото"},
 			expected: "фото",
 		},
 		{
 			name:     "empty",
-			msg:      &tgbotapi.Message{Text: ""},
+			msg:      &TGMessage{Text: ""},
 			expected: "",
 		},
 	}

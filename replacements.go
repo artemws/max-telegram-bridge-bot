@@ -10,7 +10,6 @@ import (
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // parseCrosspostReplacements парсит JSON из БД в структуру.
@@ -116,32 +115,32 @@ func replacementTags(r Replacement) string {
 }
 
 // tgReplacementsKeyboard строит inline-клавиатуру для управления заменами.
-func tgReplacementsKeyboard(maxChatID int64) tgbotapi.InlineKeyboardMarkup {
+func tgReplacementsKeyboard(maxChatID int64) *InlineKeyboardMarkup {
 	id := fmt.Sprintf("%d", maxChatID)
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("+ TG→MAX", "cpra:tg>max:"+id),
-			tgbotapi.NewInlineKeyboardButtonData("+ MAX→TG", "cpra:max>tg:"+id),
+	return NewInlineKeyboard(
+		NewInlineRow(
+			NewInlineButton("+ TG→MAX", "cpra:tg>max:"+id),
+			NewInlineButton("+ MAX→TG", "cpra:max>tg:"+id),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗑 Очистить всё", "cprc:"+id),
-			tgbotapi.NewInlineKeyboardButtonData("◀ Назад", "cprb:"+id),
+		NewInlineRow(
+			NewInlineButton("🗑 Очистить всё", "cprc:"+id),
+			NewInlineButton("◀ Назад", "cprb:"+id),
 		),
 	)
 }
 
 // tgReplItemKeyboard — кнопки для одной замены в TG.
-func tgReplItemKeyboard(dir string, idx int, maxChatID string, currentTarget string) tgbotapi.InlineKeyboardMarkup {
+func tgReplItemKeyboard(dir string, idx int, maxChatID string, currentTarget string) *InlineKeyboardMarkup {
 	toggleLabel := "🔗 Только ссылки"
 	toggleTarget := "links"
 	if currentTarget == "links" {
 		toggleLabel = "📝 Весь текст"
 		toggleTarget = "all"
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(toggleLabel, fmt.Sprintf("cprt:%s:%d:%s:%s", dir, idx, toggleTarget, maxChatID)),
-			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить", fmt.Sprintf("cprd:%s:%d:%s", dir, idx, maxChatID)),
+	return NewInlineKeyboard(
+		NewInlineRow(
+			NewInlineButton(toggleLabel, fmt.Sprintf("cprt:%s:%d:%s:%s", dir, idx, toggleTarget, maxChatID)),
+			NewInlineButton("❌ Удалить", fmt.Sprintf("cprd:%s:%d:%s", dir, idx, maxChatID)),
 		),
 	)
 }

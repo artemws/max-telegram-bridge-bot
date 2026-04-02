@@ -157,6 +157,19 @@ func (r *sqliteRepo) Unpair(platform string, chatID int64) bool {
 	return n > 0
 }
 
+func (r *sqliteRepo) GetTgThreadID(tgChatID int64) int {
+	var id int
+	r.db.QueryRow("SELECT COALESCE(tg_thread_id, 0) FROM pairs WHERE tg_chat_id = ?", tgChatID).Scan(&id)
+	return id
+}
+
+func (r *sqliteRepo) SetTgThreadID(tgChatID int64, threadID int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec("UPDATE pairs SET tg_thread_id = ? WHERE tg_chat_id = ?", threadID, tgChatID)
+	return err
+}
+
 func (r *sqliteRepo) PairCrosspost(tgChatID, maxChatID, ownerID, tgOwnerID int64) error {
 	_, err := r.db.Exec("INSERT OR REPLACE INTO crossposts (tg_chat_id, max_chat_id, created_at, owner_id, tg_owner_id) VALUES (?, ?, ?, ?, ?)",
 		tgChatID, maxChatID, time.Now().Unix(), ownerID, tgOwnerID)

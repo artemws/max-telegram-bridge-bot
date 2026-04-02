@@ -13,8 +13,6 @@ import (
 	"syscall"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func mustEnv(key string) string {
@@ -119,7 +117,6 @@ func main() {
 		slog.Info("Message format: newline")
 	}
 
-	tgToken := mustEnv("TG_TOKEN")
 	dbPath := envOr("DB_PATH", "bridge.db")
 
 	var repo Repository
@@ -141,21 +138,14 @@ func main() {
 	}
 	defer repo.Close()
 
-	var tgBot *tgbotapi.BotAPI
-	if tgAPI := os.Getenv("TG_API_URL"); tgAPI != "" {
-		tgBot, err = tgbotapi.NewBotAPIWithAPIEndpoint(tgToken, tgAPI+"/bot%s/%s")
-		if err != nil {
-			slog.Error("TG bot error", "err", err)
-			os.Exit(1)
-		}
-		slog.Info("Telegram bot started (custom API)", "username", tgBot.Self.UserName, "api", tgAPI)
-	} else {
-		tgBot, err = tgbotapi.NewBotAPI(tgToken)
-		if err != nil {
-			slog.Error("TG bot error", "err", err)
-			os.Exit(1)
-		}
-		slog.Info("Telegram bot started", "username", tgBot.Self.UserName)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tgToken := mustEnv("TG_TOKEN")
+	tg, err := NewTGBotSender(ctx, tgToken, cfg.TgAPIURL)
+	if err != nil {
+		slog.Error("TG bot error", "err", err)
+		os.Exit(1)
 	}
 
 	maxApi, err := maxbot.New(cfg.MaxToken)
@@ -170,9 +160,6 @@ func main() {
 	}
 	slog.Info("MAX bot started", "name", maxInfo.Name)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -181,7 +168,7 @@ func main() {
 		cancel()
 	}()
 
-	bridge := NewBridge(cfg, repo, tgBot, maxApi)
+	bridge := NewBridge(cfg, repo, tg, maxApi)
 	bridge.Run(ctx)
 	slog.Info("Bridge stopped")
 }

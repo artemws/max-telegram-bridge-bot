@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const (
@@ -92,8 +90,7 @@ func (b *Bridge) processQueue(ctx context.Context) {
 			slog.Warn("queue item expired", "id", item.ID, "dir", item.Direction, "attempts", item.Attempts, "age", age)
 			b.repo.DeleteFromQueue(item.ID)
 			if item.Direction == "tg2max" {
-				b.tgBot.Send(tgbotapi.NewMessage(item.SrcChatID,
-					fmt.Sprintf("Сообщение не доставлено в MAX после %d попыток.", item.Attempts)))
+				b.tg.SendMessage(ctx, item.SrcChatID, fmt.Sprintf("Сообщение не доставлено в MAX после %d попыток.", item.Attempts), nil)
 			}
 			continue
 		}
@@ -102,7 +99,7 @@ func (b *Bridge) processQueue(ctx context.Context) {
 		case "tg2max":
 			b.processQueueTg2Max(ctx, item, now)
 		case "max2tg":
-			b.processQueueMax2Tg(item, now)
+			b.processQueueMax2Tg(ctx, item, now)
 		}
 	}
 }
@@ -129,52 +126,28 @@ func (b *Bridge) processQueueTg2Max(ctx context.Context, item QueueItem, now tim
 	b.repo.DeleteFromQueue(item.ID)
 }
 
-func (b *Bridge) processQueueMax2Tg(item QueueItem, now time.Time) {
-	var sent tgbotapi.Message
+func (b *Bridge) processQueueMax2Tg(ctx context.Context, item QueueItem, now time.Time) {
+	var sentMsgID int
 	var err error
 
+	threadID := b.repo.GetTgThreadID(item.DstChatID)
+
 	if item.AttType != "" && item.AttURL != "" {
+		opts := &SendOpts{Caption: item.Text, ParseMode: item.ParseMode, ThreadID: threadID}
 		switch item.AttType {
 		case "photo":
-			photo := tgbotapi.NewPhoto(item.DstChatID, tgbotapi.FileURL(item.AttURL))
-			photo.Caption = item.Text
-			if item.ParseMode != "" {
-				photo.ParseMode = item.ParseMode
-			}
-			sent, err = b.tgBot.Send(photo)
+			sentMsgID, err = b.tg.SendPhoto(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
 		case "video":
-			video := tgbotapi.NewVideo(item.DstChatID, tgbotapi.FileURL(item.AttURL))
-			video.Caption = item.Text
-			if item.ParseMode != "" {
-				video.ParseMode = item.ParseMode
-			}
-			sent, err = b.tgBot.Send(video)
+			sentMsgID, err = b.tg.SendVideo(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
 		case "audio":
-			audio := tgbotapi.NewAudio(item.DstChatID, tgbotapi.FileURL(item.AttURL))
-			audio.Caption = item.Text
-			if item.ParseMode != "" {
-				audio.ParseMode = item.ParseMode
-			}
-			sent, err = b.tgBot.Send(audio)
+			sentMsgID, err = b.tg.SendAudio(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
 		case "file":
-			doc := tgbotapi.NewDocument(item.DstChatID, tgbotapi.FileURL(item.AttURL))
-			doc.Caption = item.Text
-			if item.ParseMode != "" {
-				doc.ParseMode = item.ParseMode
-			}
-			sent, err = b.tgBot.Send(doc)
+			sentMsgID, err = b.tg.SendDocument(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
 		default:
-			// sticker и прочее — как фото
-			photo := tgbotapi.NewPhoto(item.DstChatID, tgbotapi.FileURL(item.AttURL))
-			photo.Caption = item.Text
-			sent, err = b.tgBot.Send(photo)
+			sentMsgID, err = b.tg.SendPhoto(ctx, item.DstChatID, FileArg{URL: item.AttURL}, opts)
 		}
 	} else {
-		tgMsg := tgbotapi.NewMessage(item.DstChatID, item.Text)
-		if item.ParseMode != "" {
-			tgMsg.ParseMode = item.ParseMode
-		}
-		sent, err = b.tgBot.Send(tgMsg)
+		sentMsgID, err = b.tg.SendMessage(ctx, item.DstChatID, item.Text, &SendOpts{ParseMode: item.ParseMode, ThreadID: threadID})
 	}
 
 	if err != nil {
@@ -188,7 +161,7 @@ func (b *Bridge) processQueueMax2Tg(item QueueItem, now time.Time) {
 		b.repo.IncrementAttempt(item.ID, now.Add(retryDelay(item.Attempts+1)).Unix())
 		return
 	}
-	slog.Info("queue retry ok", "id", item.ID, "dir", "max2tg", "msgID", sent.MessageID)
-	b.repo.SaveMsg(item.DstChatID, sent.MessageID, item.SrcChatID, item.SrcMsgID)
+	slog.Info("queue retry ok", "id", item.ID, "dir", "max2tg", "msgID", sentMsgID)
+	b.repo.SaveMsg(item.DstChatID, sentMsgID, item.SrcChatID, item.SrcMsgID)
 	b.repo.DeleteFromQueue(item.ID)
 }

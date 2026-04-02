@@ -164,6 +164,19 @@ func (r *pgRepo) Unpair(platform string, chatID int64) bool {
 	return n > 0
 }
 
+func (r *pgRepo) GetTgThreadID(tgChatID int64) int {
+	var id int
+	r.db.QueryRow("SELECT COALESCE(tg_thread_id, 0) FROM pairs WHERE tg_chat_id = $1", tgChatID).Scan(&id)
+	return id
+}
+
+func (r *pgRepo) SetTgThreadID(tgChatID int64, threadID int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec("UPDATE pairs SET tg_thread_id = $1 WHERE tg_chat_id = $2", threadID, tgChatID)
+	return err
+}
+
 func (r *pgRepo) PairCrosspost(tgChatID, maxChatID, ownerID, tgOwnerID int64) error {
 	_, err := r.db.Exec(
 		"INSERT INTO crossposts (tg_chat_id, max_chat_id, created_at, owner_id, tg_owner_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tg_chat_id, max_chat_id) DO NOTHING",

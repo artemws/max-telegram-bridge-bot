@@ -4,11 +4,9 @@ import (
 	"strings"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func tgName(msg *tgbotapi.Message) string {
+func tgName(msg *TGMessage) string {
 	if msg.From == nil {
 		if msg.SenderChat != nil {
 			return msg.SenderChat.Title
@@ -31,7 +29,7 @@ func formatAttribution(name, text string, newline bool) string {
 }
 
 // formatTgCaption — для пересылки (текст или caption)
-func formatTgCaption(msg *tgbotapi.Message, prefix, newline bool) string {
+func formatTgCaption(msg *TGMessage, prefix, newline bool) string {
 	name := tgName(msg)
 	text := msg.Text
 	if text == "" {
@@ -44,7 +42,7 @@ func formatTgCaption(msg *tgbotapi.Message, prefix, newline bool) string {
 }
 
 // formatTgMessage — для edit (полный формат)
-func formatTgMessage(msg *tgbotapi.Message, prefix, newline bool) string {
+func formatTgMessage(msg *TGMessage, prefix, newline bool) string {
 	name := tgName(msg)
 	text := msg.Text
 	if text == "" {
@@ -78,7 +76,7 @@ func formatMaxCaption(upd *maxschemes.MessageCreatedUpdate, prefix, newline bool
 }
 
 // formatTgCrosspostCaption — для кросспостинга каналов (без attribution и префиксов)
-func formatTgCrosspostCaption(msg *tgbotapi.Message) string {
+func formatTgCrosspostCaption(msg *TGMessage) string {
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption

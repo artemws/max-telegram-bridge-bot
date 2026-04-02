@@ -11,8 +11,6 @@ import (
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func (b *Bridge) listenMax(ctx context.Context) {
@@ -56,8 +54,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if !ok {
 					continue
 				}
-				del := tgbotapi.NewDeleteMessage(tgChatID, tgMsgID)
-				if _, err := b.tgBot.Request(del); err != nil {
+				if err := b.tg.DeleteMessage(ctx, tgChatID, tgMsgID); err != nil {
 					slog.Error("MAX→TG delete failed", "err", err, "maxMid", delUpd.MessageId, "tgChat", tgChatID)
 				} else {
 					slog.Info("MAX→TG deleted", "tgMsg", tgMsgID, "tgChat", tgChatID)
@@ -119,33 +116,19 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					if dlErr != nil {
 						slog.Error("MAX→TG edit media download failed", "err", dlErr)
 					} else {
-						fb := tgbotapi.FileBytes{Name: name, Bytes: data}
-						var media interface{}
+						var mediaIM TGInputMedia
 						switch mediaType {
 						case "photo":
-							p := tgbotapi.NewInputMediaPhoto(fb)
-							p.Caption = fwd
-							media = p
+							mediaIM = TGInputMedia{Type: "photo", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
 						case "video":
-							v := tgbotapi.NewInputMediaVideo(fb)
-							v.Caption = fwd
-							media = v
+							mediaIM = TGInputMedia{Type: "video", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
 						case "document":
-							d := tgbotapi.NewInputMediaDocument(fb)
-							d.Caption = fwd
-							media = d
+							mediaIM = TGInputMedia{Type: "document", File: FileArg{Name: name, Bytes: data}, Caption: fwd}
 						}
-						editMedia := tgbotapi.EditMessageMediaConfig{
-							BaseEdit: tgbotapi.BaseEdit{
-								ChatID:    tgChatID,
-								MessageID: tgMsgID,
-							},
-							Media: media,
-						}
-						if _, err := b.tgBot.Send(editMedia); err != nil {
+						if err := b.tg.EditMessageMedia(ctx, tgChatID, tgMsgID, mediaIM); err != nil {
 							slog.Error("MAX→TG edit media failed", "err", err, "uid", editUpd.Message.Sender.UserId)
 							// Fallback — отправляем как новое сообщение
-							go b.sendTgMediaFromURL(tgChatID, mediaURL, mediaType, fwd, "", 0, b.cfg.maxMaxFileBytes())
+							go b.sendTgMediaFromURL(ctx, tgChatID, mediaURL, mediaType, fwd, "", 0, 0, b.cfg.maxMaxFileBytes())
 						} else {
 							slog.Info("MAX→TG edited media", "tgMsg", tgMsgID, "type", mediaType, "uid", editUpd.Message.Sender.UserId)
 						}
@@ -156,8 +139,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 				if text == "" {
 					continue
 				}
-				editMsg := tgbotapi.NewEditMessageText(tgChatID, tgMsgID, fwd)
-				if _, err := b.tgBot.Send(editMsg); err != nil {
+				if err := b.tg.EditMessageText(ctx, tgChatID, tgMsgID, fwd, nil); err != nil {
 					slog.Error("MAX→TG edit failed", "err", err, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
 				} else {
 					slog.Info("MAX→TG edited", "tgMsg", tgMsgID, "uid", editUpd.Message.Sender.UserId, "maxChat", editUpd.Message.Recipient.ChatId)
@@ -372,7 +354,7 @@ func (b *Bridge) listenMax(ctx context.Context) {
 					} else {
 						for _, l := range links {
 							kb := maxCrosspostKeyboard(b.maxApi, l.Direction, l.MaxChatID)
-							tgTitle := b.tgChatTitle(l.TgChatID)
+							tgTitle := b.tgChatTitle(ctx, l.TgChatID)
 							statusText := maxCrosspostStatusText(l.TgChatID, l.Direction)
 							if tgTitle != "" {
 								statusText = fmt.Sprintf("TG: «%s» (%d)\n", tgTitle, l.TgChatID) + statusText
@@ -857,6 +839,8 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		return
 	}
 
+	threadID := b.repo.GetTgThreadID(tgChatID)
+
 	body := msgUpd.Message.Body
 	chatID := msgUpd.Message.Recipient.ChatId
 	text := strings.TrimSpace(body.Text)
@@ -877,7 +861,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	// Проверяем вложения
-	var sent tgbotapi.Message
+	var sentMsgID int
 	var sendErr error
 	mediaSent := false
 	var qAttType, qAttURL string // для очереди при ошибке
@@ -890,7 +874,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 	}
 
 	// Собираем вложения: фото/видео → albumMedia (отправляем вместе), остальные → soloMedia
-	var albumMedia []interface{}
+	var albumMedia []TGInputMedia
 	var soloMedia []struct {
 		url     string
 		attType string
@@ -908,7 +892,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if len(albumMedia) == 0 {
 					qAttType, qAttURL = "photo", a.Payload.Url
 				}
-				p := tgbotapi.NewInputMediaPhoto(tgbotapi.FileURL(a.Payload.Url))
+				p := TGInputMedia{Type: "photo", File: FileArg{URL: a.Payload.Url}}
 				albumMedia = append(albumMedia, p)
 			}
 		case *maxschemes.VideoAttachment:
@@ -916,7 +900,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				if len(albumMedia) == 0 {
 					qAttType, qAttURL = "video", a.Payload.Url
 				}
-				v := tgbotapi.NewInputMediaVideo(tgbotapi.FileURL(a.Payload.Url))
+				v := TGInputMedia{Type: "video", File: FileArg{URL: a.Payload.Url}}
 				albumMedia = append(albumMedia, v)
 			}
 		case *maxschemes.AudioAttachment:
@@ -960,25 +944,15 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		mediaSent = true
 		// Caption и reply только к первому элементу
 		if htmlCaption != "" || replyToID != 0 {
-			switch first := albumMedia[0].(type) {
-			case tgbotapi.InputMediaPhoto:
-				first.Caption = htmlCaption
-				if pm != "" {
-					first.ParseMode = pm
-				}
-				albumMedia[0] = first
-			case tgbotapi.InputMediaVideo:
-				first.Caption = htmlCaption
-				if pm != "" {
-					first.ParseMode = pm
-				}
-				albumMedia[0] = first
+			albumMedia[0].Caption = htmlCaption
+			if pm != "" {
+				albumMedia[0].ParseMode = pm
 			}
 		}
 
 		if len(albumMedia) == 1 {
 			// Одно вложение — отправляем обычным сообщением (альбом из 1 элемента не имеет reply)
-			sent, sendErr = b.sendTgMediaFromURL(tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, b.cfg.maxMaxFileBytes())
+			sentMsgID, sendErr = b.sendTgMediaFromURL(ctx, tgChatID, qAttURL, qAttType, htmlCaption, pm, replyToID, threadID, b.cfg.maxMaxFileBytes())
 			var e *ErrFileTooLarge
 			if errors.As(sendErr, &e) {
 				slog.Warn("MAX→TG media too big", "name", e.Name, "size", e.Size)
@@ -989,18 +963,14 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			}
 		} else {
 			// Несколько — отправляем как media group (альбом)
-			cfg := tgbotapi.NewMediaGroup(tgChatID, albumMedia)
-			if replyToID != 0 {
-				cfg.ReplyToMessageID = replyToID
-			}
-			msgs, err := b.tgBot.SendMediaGroup(cfg)
+			msgIDs, err := b.tg.SendMediaGroup(ctx, tgChatID, albumMedia, &SendOpts{ThreadID: threadID, ReplyToID: replyToID})
 			if err != nil {
 				slog.Error("MAX→TG album send failed", "err", err)
 				sendErr = err
 				m := maxbot.NewMessage().SetChat(chatID).SetText("Не удалось отправить медиаальбом в Telegram.")
 				b.maxApi.Messages.Send(ctx, m)
-			} else if len(msgs) > 0 {
-				sent = msgs[0]
+			} else if len(msgIDs) > 0 {
+				sentMsgID = msgIDs[0]
 			}
 		}
 	}
@@ -1016,7 +986,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 			smReplyTo = replyToID
 		}
 		firstSolo = false
-		s, err := b.sendTgMediaFromURL(tgChatID, sm.url, sm.attType, smCaption, pm, smReplyTo, b.cfg.maxMaxFileBytes(), sm.name)
+		s, err := b.sendTgMediaFromURL(ctx, tgChatID, sm.url, sm.attType, smCaption, pm, smReplyTo, threadID, b.cfg.maxMaxFileBytes(), sm.name)
 		if err != nil {
 			var e *ErrFileTooLarge
 			if errors.As(err, &e) {
@@ -1035,7 +1005,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 				sendErr = err
 			}
 		} else if !mediaSent {
-			sent = s
+			sentMsgID = s
 			mediaSent = true
 		}
 	}
@@ -1048,14 +1018,9 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		// Если есть markups и caption = оригинальный текст (кросспостинг), конвертируем в HTML
 		if len(body.Markups) > 0 && caption == text {
 			htmlText := maxMarkupsToHTML(text, body.Markups)
-			tgMsg := tgbotapi.NewMessage(tgChatID, htmlText)
-			tgMsg.ParseMode = "HTML"
-			tgMsg.ReplyToMessageID = replyToID
-			sent, sendErr = b.tgBot.Send(tgMsg)
+			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, htmlText, &SendOpts{ParseMode: "HTML", ReplyToID: replyToID, ThreadID: threadID})
 		} else {
-			tgMsg := tgbotapi.NewMessage(tgChatID, caption)
-			tgMsg.ReplyToMessageID = replyToID
-			sent, sendErr = b.tgBot.Send(tgMsg)
+			sentMsgID, sendErr = b.tg.SendMessage(ctx, tgChatID, caption, &SendOpts{ReplyToID: replyToID, ThreadID: threadID})
 		}
 	}
 
@@ -1064,7 +1029,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		slog.Error("MAX→TG send failed", "err", errStr, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
 
 		// Группа преобразована в supergroup — автоматически мигрируем chat ID
-		var tgErr *tgbotapi.Error
+		var tgErr *TGError
 		if errors.As(sendErr, &tgErr) && tgErr.MigrateToChatID != 0 {
 			newChatID := tgErr.MigrateToChatID
 			slog.Info("TG chat migrated, updating pair", "old", tgChatID, "new", newChatID)
@@ -1109,7 +1074,7 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		b.cbFail(tgChatID)
 	} else {
 		b.cbSuccess(tgChatID)
-		slog.Info("MAX→TG sent", "msgID", sent.MessageID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
-		b.repo.SaveMsg(tgChatID, sent.MessageID, chatID, body.Mid)
+		slog.Info("MAX→TG sent", "msgID", sentMsgID, "media", mediaSent, "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+		b.repo.SaveMsg(tgChatID, sentMsgID, chatID, body.Mid)
 	}
 }

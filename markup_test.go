@@ -1,0 +1,252 @@
+package main
+
+import (
+	"testing"
+
+	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
+)
+
+// --- tgEntitiesToMarkdown ---
+
+func TestTgEntitiesToMarkdown_NoEntities(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello world", nil)
+	if got != "hello world" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Empty(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello", []Entity{})
+	if got != "hello" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Bold(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello world", []Entity{
+		{Type: "bold", Offset: 0, Length: 5},
+	})
+	if got != "**hello** world" {
+		t.Errorf("got %q, want %q", got, "**hello** world")
+	}
+}
+
+func TestTgEntitiesToMarkdown_Italic(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello world", []Entity{
+		{Type: "italic", Offset: 6, Length: 5},
+	})
+	if got != "hello _world_" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Code(t *testing.T) {
+	got := tgEntitiesToMarkdown("use fmt.Println please", []Entity{
+		{Type: "code", Offset: 4, Length: 11},
+	})
+	if got != "use `fmt.Println` please" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Pre(t *testing.T) {
+	got := tgEntitiesToMarkdown("code: func main()", []Entity{
+		{Type: "pre", Offset: 6, Length: 11},
+	})
+	want := "code: ```\nfunc main()\n```"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Strikethrough(t *testing.T) {
+	got := tgEntitiesToMarkdown("old new", []Entity{
+		{Type: "strikethrough", Offset: 0, Length: 3},
+	})
+	if got != "~~old~~ new" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_TextLink(t *testing.T) {
+	got := tgEntitiesToMarkdown("click here now", []Entity{
+		{Type: "text_link", Offset: 6, Length: 4, URL: "https://example.com"},
+	})
+	want := "click [here](https://example.com) now"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_MultipleEntities(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello world test", []Entity{
+		{Type: "bold", Offset: 0, Length: 5},
+		{Type: "italic", Offset: 6, Length: 5},
+	})
+	want := "**hello** _world_ test"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_TrailingSpaces(t *testing.T) {
+	// Entity covering "hello " (with trailing space) — space should be outside markers
+	got := tgEntitiesToMarkdown("hello world", []Entity{
+		{Type: "bold", Offset: 0, Length: 6}, // "hello "
+	})
+	want := "**hello** world"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_LeadingSpaces(t *testing.T) {
+	got := tgEntitiesToMarkdown("a  bold rest", []Entity{
+		{Type: "bold", Offset: 1, Length: 6}, // "  bold"
+	})
+	want := "a  **bold** rest"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_UnknownType(t *testing.T) {
+	got := tgEntitiesToMarkdown("hello world", []Entity{
+		{Type: "mention", Offset: 0, Length: 5},
+	})
+	if got != "hello world" {
+		t.Errorf("unknown entity type should be skipped, got %q", got)
+	}
+}
+
+func TestTgEntitiesToMarkdown_Emoji(t *testing.T) {
+	// Emoji "🔥" is 2 UTF-16 code units (surrogate pair)
+	text := "🔥hello"
+	got := tgEntitiesToMarkdown(text, []Entity{
+		{Type: "bold", Offset: 2, Length: 5}, // "hello" starts at UTF-16 offset 2
+	})
+	want := "🔥**hello**"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_EntityBeyondText(t *testing.T) {
+	got := tgEntitiesToMarkdown("hi", []Entity{
+		{Type: "bold", Offset: 0, Length: 100},
+	})
+	want := "**hi**"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// --- maxMarkupsToHTML ---
+
+func TestMaxMarkupsToHTML_NoMarkups(t *testing.T) {
+	got := maxMarkupsToHTML("hello <world>", nil)
+	if got != "hello &lt;world&gt;" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestMaxMarkupsToHTML_Bold(t *testing.T) {
+	got := maxMarkupsToHTML("hello world", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupStrong, From: 0, Length: 5},
+	})
+	want := "<b>hello</b> world"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Italic(t *testing.T) {
+	got := maxMarkupsToHTML("hello world", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupEmphasized, From: 6, Length: 5},
+	})
+	want := "hello <i>world</i>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Code(t *testing.T) {
+	got := maxMarkupsToHTML("use fmt.Println", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupMonospaced, From: 4, Length: 11},
+	})
+	want := "use <code>fmt.Println</code>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Strikethrough(t *testing.T) {
+	got := maxMarkupsToHTML("old new", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupStrikethrough, From: 0, Length: 3},
+	})
+	want := "<s>old</s> new"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Link(t *testing.T) {
+	got := maxMarkupsToHTML("click here", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupLink, From: 6, Length: 4, URL: "https://example.com"},
+	})
+	want := `click <a href="https://example.com">here</a>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_EscapesHTML(t *testing.T) {
+	got := maxMarkupsToHTML("<b>not bold</b>", nil)
+	want := "&lt;b&gt;not bold&lt;/b&gt;"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Multiple(t *testing.T) {
+	got := maxMarkupsToHTML("hello world test", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupStrong, From: 0, Length: 5},
+		{Type: maxschemes.MarkupEmphasized, From: 6, Length: 5},
+	})
+	want := "<b>hello</b> <i>world</i> test"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Emoji(t *testing.T) {
+	// "🔥test" — emoji is surrogate pair (2 UTF-16 units)
+	text := "🔥test"
+	got := maxMarkupsToHTML(text, []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupStrong, From: 2, Length: 4}, // "test"
+	})
+	want := "🔥<b>test</b>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_Underline(t *testing.T) {
+	got := maxMarkupsToHTML("hello", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupUnderline, From: 0, Length: 5},
+	})
+	want := "<u>hello</u>"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestMaxMarkupsToHTML_LinkEscapesURL(t *testing.T) {
+	got := maxMarkupsToHTML("link", []maxschemes.MarkUp{
+		{Type: maxschemes.MarkupLink, From: 0, Length: 4, URL: "https://example.com/?a=1&b=2"},
+	})
+	want := `<a href="https://example.com/?a=1&amp;b=2">link</a>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

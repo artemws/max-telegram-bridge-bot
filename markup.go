@@ -8,14 +8,13 @@ import (
 	"unicode/utf16"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // --- TG Entities → Markdown (для MAX) ---
 
 // tgEntitiesToMarkdown конвертирует TG text + entities в markdown-текст для MAX.
 // Обрабатывает edge cases: пробелы перед/после маркеров выносятся за пределы тегов.
-func tgEntitiesToMarkdown(text string, entities []tgbotapi.MessageEntity) string {
+func tgEntitiesToMarkdown(text string, entities []Entity) string {
 	if len(entities) == 0 {
 		return text
 	}
@@ -28,11 +27,11 @@ func tgEntitiesToMarkdown(text string, entities []tgbotapi.MessageEntity) string
 	// Работаем в UTF-16 координатах
 	type fragment struct {
 		start, end int // UTF-16 offsets
-		entity     *tgbotapi.MessageEntity
+		entity     *Entity
 	}
 
 	// Сортируем entities по offset
-	sorted := make([]tgbotapi.MessageEntity, len(entities))
+	sorted := make([]Entity, len(entities))
 	copy(sorted, entities)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Offset < sorted[j].Offset

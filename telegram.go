@@ -11,33 +11,24 @@ import (
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func (b *Bridge) listenTelegram(ctx context.Context) {
-	var updates tgbotapi.UpdatesChannel
+	var updates <-chan TGUpdate
 
 	if b.cfg.WebhookURL != "" {
 		whPath := b.tgWebhookPath()
 		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + whPath
-		wh, err := tgbotapi.NewWebhook(whURL)
-		if err != nil {
-			slog.Error("TG webhook config error", "err", err)
-			return
-		}
-		if _, err := b.tgBot.Request(wh); err != nil {
+		if err := b.tg.SetWebhook(ctx, whURL); err != nil {
 			slog.Error("TG set webhook failed", "err", err)
 			return
 		}
-		updates = b.tgBot.ListenForWebhook(whPath)
+		updates = b.tg.StartWebhook(whPath)
 		slog.Info("TG webhook mode")
 	} else {
 		// Удаляем webhook если был, переключаемся на polling
-		b.tgBot.Request(tgbotapi.DeleteWebhookConfig{})
-		u := tgbotapi.NewUpdate(0)
-		u.Timeout = 60
-		updates = b.tgBot.GetUpdatesChan(u)
+		b.tg.DeleteWebhook(ctx)
+		updates = b.tg.StartPolling(ctx)
 		slog.Info("TG polling mode")
 	}
 
@@ -142,16 +133,16 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			}
 
 			if text == "/whoami" {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+				b.tg.SendMessage(ctx, msg.Chat.ID,
 					"MaxTelegramBridgeBot — мост между Telegram и MAX.\n"+
 						"Автор: Andrey Lugovskoy (@BEARlogin)\n"+
 						"Исходники: https://github.com/BEARlogin/max-telegram-bridge-bot\n"+
-						"Лицензия: CC BY-NC 4.0"))
+						"Лицензия: CC BY-NC 4.0", &SendOpts{ThreadID: msg.MessageThreadID})
 				continue
 			}
 
 			if text == "/start" || text == "/help" {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
+				b.tg.SendMessage(ctx, msg.Chat.ID,
 					"Бот-мост между Telegram и MAX.\n\n"+
 						"Команды (группы):\n"+
 						"/bridge — создать ключ для связки чатов\n"+
@@ -178,7 +169,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 						"3. В одном из чатов отправьте /bridge\n"+
 						"4. Бот выдаст ключ — отправьте /bridge <ключ> в другом чате\n"+
 						"5. Готово!\n\n"+
-						"Поддержка: https://github.com/BEARlogin/max-telegram-bridge-bot/issues"))
+						"Поддержка: https://github.com/BEARlogin/max-telegram-bridge-bot/issues", &SendOpts{ThreadID: msg.MessageThreadID})
 				continue
 			}
 
@@ -188,7 +179,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					b.clearReplWait(msg.From.ID)
 					rule, valid := parseReplacementInput(text)
 					if !valid {
-						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат. Используйте:\n<code>from | to</code>\nили\n<code>/regex/ | to</code>"))
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Неверный формат. Используйте:\n<code>from | to</code>\nили\n<code>/regex/ | to</code>", &SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 						continue
 					}
 					rule.Target = w.target
@@ -200,7 +191,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					}
 					if err := b.repo.SetCrosspostReplacements(w.maxChatID, repl); err != nil {
 						slog.Error("save replacements failed", "err", err)
-						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Ошибка сохранения."))
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Ошибка сохранения.", &SendOpts{ThreadID: msg.MessageThreadID})
 						continue
 					}
 					ruleType := "строка"
@@ -211,48 +202,45 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					if w.direction == "max>tg" {
 						dirLabel = "MAX → TG"
 					}
-					m := tgbotapi.NewMessage(msg.Chat.ID,
-						fmt.Sprintf("Замена добавлена (%s, %s):\n<code>%s</code> → <code>%s</code>", dirLabel, ruleType, rule.From, rule.To))
-					m.ParseMode = "HTML"
-					b.tgBot.Send(m)
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						fmt.Sprintf("Замена добавлена (%s, %s):\n<code>%s</code> → <code>%s</code>", dirLabel, ruleType, rule.From, rule.To),
+						&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 					continue
 				}
 			}
 
 			// /crosspost в личке TG — показать список связок
 			if msg.Chat.Type == "private" && text == "/crosspost" {
-				if !b.checkUserAllowed(msg.Chat.ID, msg.From.ID) {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, msg.From.ID, msg.MessageThreadID) {
 					continue
 				}
 				links := b.repo.ListCrossposts(msg.From.ID)
 				if len(links) == 0 {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-						"Нет активных связок.\n\nНастройка: перешлите пост из TG-канала сюда, затем в MAX-боте /crosspost <ID>"))
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						"Нет активных связок.\n\nНастройка: перешлите пост из TG-канала сюда, затем в MAX-боте /crosspost <ID>", &SendOpts{ThreadID: msg.MessageThreadID})
 				} else {
 					for _, l := range links {
 						kb := tgCrosspostKeyboard(l.Direction, l.MaxChatID)
-						tgTitle := b.tgChatTitle(l.TgChatID)
+						tgTitle := b.tgChatTitle(ctx, l.TgChatID)
 						statusText := tgCrosspostStatusText(tgTitle, l.Direction)
 						if tgTitle == "" {
 							statusText += fmt.Sprintf("\nTG: %d ↔ MAX: %d", l.TgChatID, l.MaxChatID)
 						} else {
 							statusText += fmt.Sprintf("\nTG: «%s» (%d)\nMAX: %d", tgTitle, l.TgChatID, l.MaxChatID)
 						}
-						m := tgbotapi.NewMessage(msg.Chat.ID, statusText)
-						m.ReplyMarkup = kb
-						b.tgBot.Send(m)
+						b.tg.SendMessage(ctx, msg.Chat.ID, statusText, &SendOpts{ReplyMarkup: kb, ThreadID: msg.MessageThreadID})
 					}
 				}
 				continue
 			}
 
 			// Пересланное сообщение из канала → показать ID или управление (только в личке)
-			if msg.Chat.Type == "private" && msg.ForwardFromChat != nil && msg.ForwardFromChat.Type == "channel" {
-				if !b.checkUserAllowed(msg.Chat.ID, msg.From.ID) {
+			if msg.Chat.Type == "private" && msg.ForwardOriginChat != nil && msg.ForwardOriginChat.Type == "channel" {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, msg.From.ID, msg.MessageThreadID) {
 					continue
 				}
-				channelID := msg.ForwardFromChat.ID
-				channelTitle := msg.ForwardFromChat.Title
+				channelID := msg.ForwardOriginChat.ID
+				channelTitle := msg.ForwardOriginChat.Title
 
 				// Запоминаем TG user ID для этого канала (для owner при pairing)
 				b.cpTgOwnerMu.Lock()
@@ -264,16 +252,13 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				if maxChatID, direction, ok := b.repo.GetCrosspostMaxChat(channelID); ok {
 					text := tgCrosspostStatusText(channelTitle, direction)
 					kb := tgCrosspostKeyboard(direction, maxChatID)
-					m := tgbotapi.NewMessage(msg.Chat.ID, text)
-					m.ReplyMarkup = kb
-					b.tgBot.Send(m)
+					b.tg.SendMessage(ctx, msg.Chat.ID, text, &SendOpts{ReplyMarkup: kb, ThreadID: msg.MessageThreadID})
 					continue
 				}
 
-				cpMsg := tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("TG-канал «%s»\nID: <code>%d</code>\n\nВ личке MAX-бота напишите:\n<code>/crosspost %d</code>\n\nMAX-бот: %s\n\nЗатем перешлите пост из MAX-канала в личку MAX-бота.", channelTitle, channelID, channelID, b.cfg.MaxBotURL))
-				cpMsg.ParseMode = "HTML"
-				b.tgBot.Send(cpMsg)
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("TG-канал «%s»\nID: <code>%d</code>\n\nВ личке MAX-бота напишите:\n<code>/crosspost %d</code>\n\nMAX-бот: %s\n\nЗатем перешлите пост из MAX-канала в личку MAX-бота.", channelTitle, channelID, channelID, b.cfg.MaxBotURL),
+					&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 				continue
 			}
 
@@ -281,46 +266,41 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 			isGroup := isTgGroup(msg.Chat.Type)
 			isAdmin := false
 			if isGroup && msg.From != nil {
-				member, err := b.tgBot.GetChatMember(tgbotapi.GetChatMemberConfig{
-					ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-						ChatID: msg.Chat.ID,
-						UserID: msg.From.ID,
-					},
-				})
+				status, err := b.tg.GetChatMember(ctx, msg.Chat.ID, msg.From.ID)
 				if err == nil {
-					isAdmin = isTgAdmin(member.Status)
+					isAdmin = isTgAdmin(status)
 				}
 			}
 
 			// /bridge prefix on/off
 			if text == "/bridge prefix on" || text == "/bridge prefix off" {
-				if !b.checkUserAllowed(msg.Chat.ID, tgUserID(msg)) {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
 					continue
 				}
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Эта команда доступна только админам группы.", &SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
 				on := text == "/bridge prefix on"
 				if b.repo.SetPrefix("tg", msg.Chat.ID, on) {
 					if on {
-						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Префикс [TG]/[MAX] включён."))
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Префикс [TG]/[MAX] включён.", &SendOpts{ThreadID: msg.MessageThreadID})
 					} else {
-						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Префикс [TG]/[MAX] выключен."))
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Префикс [TG]/[MAX] выключен.", &SendOpts{ThreadID: msg.MessageThreadID})
 					}
 				} else {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Чат не связан. Сначала выполните /bridge."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Чат не связан. Сначала выполните /bridge.", &SendOpts{ThreadID: msg.MessageThreadID})
 				}
 				continue
 			}
 
 			// /bridge или /bridge <key>
 			if text == "/bridge" || strings.HasPrefix(text, "/bridge ") {
-				if !b.checkUserAllowed(msg.Chat.ID, tgUserID(msg)) {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
 					continue
 				}
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Эта команда доступна только админам группы.", &SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
 				key := strings.TrimSpace(strings.TrimPrefix(text, "/bridge"))
@@ -331,32 +311,34 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 				}
 
 				if paired {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Связано! Сообщения теперь пересылаются."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Связано! Сообщения теперь пересылаются.", &SendOpts{ThreadID: msg.MessageThreadID})
+					if msg.MessageThreadID != 0 {
+						b.repo.SetTgThreadID(msg.Chat.ID, msg.MessageThreadID)
+					}
 					slog.Info("paired", "platform", "tg", "chat", msg.Chat.ID, "key", key)
 				} else if generatedKey != "" {
-					keyMsg := tgbotapi.NewMessage(msg.Chat.ID,
-						fmt.Sprintf("Ключ для связки: <code>%s</code>\n\nОтправьте в MAX-чате:\n<code>/bridge %s</code>\n\nMAX-бот: %s", generatedKey, generatedKey, b.cfg.MaxBotURL))
-					keyMsg.ParseMode = "HTML"
-					b.tgBot.Send(keyMsg)
+					b.tg.SendMessage(ctx, msg.Chat.ID,
+						fmt.Sprintf("Ключ для связки: <code>%s</code>\n\nОтправьте в MAX-чате:\n<code>/bridge %s</code>\n\nMAX-бот: %s", generatedKey, generatedKey, b.cfg.MaxBotURL),
+						&SendOpts{ParseMode: "HTML", ThreadID: msg.MessageThreadID})
 					slog.Info("pending", "platform", "tg", "chat", msg.Chat.ID, "key", generatedKey)
 				} else {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Ключ не найден или чат той же платформы."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Ключ не найден или чат той же платформы.", &SendOpts{ThreadID: msg.MessageThreadID})
 				}
 				continue
 			}
 
 			if text == "/unbridge" {
 				if isGroup && !isAdmin {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Эта команда доступна только админам группы."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Эта команда доступна только админам группы.", &SendOpts{ThreadID: msg.MessageThreadID})
 					continue
 				}
-				if !b.checkUserAllowed(msg.Chat.ID, tgUserID(msg)) {
+				if !b.checkUserAllowed(ctx, msg.Chat.ID, tgUserID(msg), msg.MessageThreadID) {
 					continue
 				}
 				if b.repo.Unpair("tg", msg.Chat.ID) {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Связка удалена."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Связка удалена.", &SendOpts{ThreadID: msg.MessageThreadID})
 				} else {
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Этот чат не связан."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Этот чат не связан.", &SendOpts{ThreadID: msg.MessageThreadID})
 				}
 				continue
 			}
@@ -404,7 +386,7 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 	}
 }
 
-func tgUserID(msg *tgbotapi.Message) int64 {
+func tgUserID(msg *TGMessage) int64 {
 	if msg.From != nil {
 		return msg.From.ID
 	}
@@ -412,7 +394,7 @@ func tgUserID(msg *tgbotapi.Message) int64 {
 }
 
 // forwardTgToMax пересылает TG-сообщение (текст/медиа) в MAX-чат.
-func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxChatID int64, caption string) {
+func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID int64, caption string) {
 	if b.cbBlocked(maxChatID) {
 		return
 	}
@@ -432,7 +414,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			warn = fmt.Sprintf("⚠️ Файл \"%s\" слишком большой для пересылки (%s). Максимальный размер файла %d МБ.",
 				fileName, formatFileSize(fileSize), limit)
 		}
-		b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, warn))
+		b.tg.SendMessage(ctx, msg.Chat.ID, warn, nil)
 		return true
 	}
 
@@ -452,15 +434,15 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				m.AddPhoto(uploaded)
 			} else {
 				slog.Error("TG→MAX photo upload failed", "err", err)
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить фото в MAX."))
+				b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить фото в MAX.", nil)
 				return
 			}
-		} else if fileURL, err := b.tgFileURL(photo.FileID); err == nil {
+		} else if fileURL, err := b.tgFileURL(ctx, photo.FileID); err == nil {
 			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 				m.AddPhoto(uploaded)
 			} else {
 				slog.Error("TG→MAX photo upload failed", "err", err)
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить фото в MAX."))
+				b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить фото в MAX.", nil)
 				return
 			}
 		}
@@ -474,8 +456,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if err != nil {
 			slog.Error("TG→MAX send failed", "err", err, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 			if b.cbFail(maxChatID) {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Не удалось переслать в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes()))))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Не удалось переслать в MAX. Пересылка приостановлена на %d мин. Проверьте, что бот добавлен в MAX-чат и является админом.", int(cbCooldown.Minutes())), nil)
 			}
 		} else {
 			b.cbSuccess(maxChatID)
@@ -497,7 +479,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaAttType = "video"
 		} else {
 			slog.Error("TG→MAX gif upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Не удалось отправить GIF \"%s\" в MAX.", name)))
+			b.tg.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf("Не удалось отправить GIF \"%s\" в MAX.", name), nil)
 			return
 		}
 	} else if msg.Sticker != nil {
@@ -511,12 +493,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 				mediaAttType = "video"
 			} else {
 				slog.Error("TG→MAX sticker upload failed", "err", err)
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить стикер в MAX."))
+				b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить стикер в MAX.", nil)
 				return
 			}
 		} else {
 			// Обычный стикер WebP → отправляем как фото
-			if fileURL, err := b.tgFileURL(msg.Sticker.FileID); err == nil {
+			if fileURL, err := b.tgFileURL(ctx, msg.Sticker.FileID); err == nil {
 				if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
 					m := maxbot.NewMessage().SetChat(maxChatID).SetText(caption)
 					m.AddPhoto(uploaded)
@@ -529,7 +511,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 					result, err := b.maxApi.Messages.SendWithResult(ctx, m)
 					if err != nil {
 						slog.Error("TG→MAX sticker send failed", "err", err)
-						b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить стикер в MAX."))
+						b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить стикер в MAX.", nil)
 					} else {
 						slog.Info("TG→MAX sent", "mid", result.Body.Mid)
 						b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, result.Body.Mid)
@@ -537,7 +519,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 					return
 				} else {
 					slog.Error("TG→MAX sticker photo upload failed", "err", err)
-					b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить стикер в MAX."))
+					b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить стикер в MAX.", nil)
 					return
 				}
 			}
@@ -555,7 +537,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaAttType = "video"
 		} else {
 			slog.Error("TG→MAX video upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Не удалось отправить видео \"%s\" в MAX.", name)))
+			b.tg.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf("Не удалось отправить видео \"%s\" в MAX.", name), nil)
 			return
 		}
 	} else if msg.VideoNote != nil {
@@ -567,7 +549,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			mediaAttType = "video"
 		} else {
 			slog.Error("TG→MAX video note upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить кружок в MAX."))
+			b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить кружок в MAX.", nil)
 			return
 		}
 	} else if msg.Document != nil {
@@ -592,8 +574,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if b.cfg.MaxAllowedExts != nil && attType == "file" {
 			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
 			if _, ok := b.cfg.MaxAllowedExts[ext]; !ok {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (расширение .%s не разрешено).", name, ext)))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (расширение .%s не разрешено).", name, ext), nil)
 				return
 			}
 		}
@@ -603,13 +585,13 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", name)))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", name), nil)
 				return
 			}
 			slog.Error("TG→MAX file upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-				fmt.Sprintf("Не удалось отправить файл \"%s\" в MAX.", name)))
+			b.tg.SendMessage(ctx, msg.Chat.ID,
+				fmt.Sprintf("Не удалось отправить файл \"%s\" в MAX.", name), nil)
 			return
 		}
 	} else if msg.Voice != nil {
@@ -622,12 +604,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", e.Name)))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", e.Name), nil)
 				return
 			}
 			slog.Error("TG→MAX voice upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Не удалось отправить голосовое сообщение в MAX."))
+			b.tg.SendMessage(ctx, msg.Chat.ID, "Не удалось отправить голосовое сообщение в MAX.", nil)
 			return
 		}
 	} else if msg.Audio != nil {
@@ -642,8 +624,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		if b.cfg.MaxAllowedExts != nil {
 			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
 			if _, ok := b.cfg.MaxAllowedExts[ext]; !ok {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (расширение .%s не разрешено).", name, ext)))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (расширение .%s не разрешено).", name, ext), nil)
 				return
 			}
 		}
@@ -653,12 +635,12 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 		} else {
 			var e *ErrForbiddenExtension
 			if errors.As(err, &e) {
-				b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", name)))
+				b.tg.SendMessage(ctx, msg.Chat.ID,
+					fmt.Sprintf("Файл \"%s\" не поддерживается в MAX (запрещённое расширение).", name), nil)
 				return
 			}
 			slog.Error("TG→MAX audio upload failed", "err", err)
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Не удалось отправить аудио \"%s\" в MAX.", name)))
+			b.tg.SendMessage(ctx, msg.Chat.ID, fmt.Sprintf("Не удалось отправить аудио \"%s\" в MAX.", name), nil)
 			return
 		}
 	}
@@ -732,8 +714,8 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 			b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
 		}
 		if b.cbFail(maxChatID) {
-			b.tgBot.Send(tgbotapi.NewMessage(msg.Chat.ID,
-				"MAX API недоступен. Сообщения в очереди, будут доставлены автоматически."))
+			b.tg.SendMessage(ctx, msg.Chat.ID,
+				"MAX API недоступен. Сообщения в очереди, будут доставлены автоматически.", nil)
 		}
 	} else {
 		b.cbSuccess(maxChatID)
@@ -743,7 +725,7 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *tgbotapi.Message, maxC
 }
 
 // handleTgChannelPost обрабатывает посты из TG-каналов (только пересылка crosspost).
-func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message) {
+func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *TGMessage) {
 	// Команды в канале игнорируем — настройка через личку с ботом
 	text := strings.TrimSpace(msg.Text)
 	if strings.HasPrefix(text, "/") {
@@ -799,7 +781,7 @@ func (b *Bridge) handleTgChannelPost(ctx context.Context, msg *tgbotapi.Message)
 }
 
 // handleTgCallback обрабатывает нажатия inline-кнопок (crosspost management).
-func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQuery) {
+func (b *Bridge) handleTgCallback(ctx context.Context, query *TGCallback) {
 	if query.Message == nil || query.From == nil {
 		return
 	}
@@ -824,7 +806,7 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			return
 		}
 		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Только владелец связки может изменять настройки."))
+			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может изменять настройки.")
 			return
 		}
 		b.repo.SetCrosspostDirection(maxChatID, dir)
@@ -833,9 +815,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		title := parseTgCrosspostTitle(query.Message.Text)
 		text := tgCrosspostStatusText(title, dir)
 		kb := tgCrosspostKeyboard(dir, maxChatID)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Готово"))
+		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "Готово")
 		return
 	}
 
@@ -846,18 +827,17 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			return
 		}
 		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Только владелец связки может удалять."))
+			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может удалять.")
 			return
 		}
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Да, удалить", fmt.Sprintf("cpuc:%d", maxChatID)),
-				tgbotapi.NewInlineKeyboardButtonData("Отмена", fmt.Sprintf("cpux:%d", maxChatID)),
+		kb := NewInlineKeyboard(
+			NewInlineRow(
+				NewInlineButton("Да, удалить", fmt.Sprintf("cpuc:%d", maxChatID)),
+				NewInlineButton("Отмена", fmt.Sprintf("cpux:%d", maxChatID)),
 			),
 		)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, "Удалить кросспостинг?", kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.EditMessageText(ctx, chatID, msgID, "Удалить кросспостинг?", &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 
@@ -870,26 +850,18 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		repl := b.repo.GetCrosspostReplacements(maxChatID)
 		id := strconv.FormatInt(maxChatID, 10)
 		// Удаляем сообщение со связкой
-		b.tgBot.Request(tgbotapi.NewDeleteMessage(chatID, msgID))
+		b.tg.DeleteMessage(ctx, chatID, msgID)
 		// Заголовок с кнопками добавления
 		kb := tgReplacementsKeyboard(maxChatID)
-		m := tgbotapi.NewMessage(chatID, formatReplacementsHeader(repl))
-		m.ReplyMarkup = kb
-		b.tgBot.Send(m)
+		b.tg.SendMessage(ctx, chatID, formatReplacementsHeader(repl), &SendOpts{ReplyMarkup: kb})
 		// Каждая замена — отдельное сообщение с кнопкой удаления
 		for i, r := range repl.TgToMax {
-			m := tgbotapi.NewMessage(chatID, formatReplacementItem(r, "tg>max"))
-			m.ParseMode = "HTML"
-			m.ReplyMarkup = tgReplItemKeyboard("tg>max", i, id, r.Target)
-			b.tgBot.Send(m)
+			b.tg.SendMessage(ctx, chatID, formatReplacementItem(r, "tg>max"), &SendOpts{ParseMode: "HTML", ReplyMarkup: tgReplItemKeyboard("tg>max", i, id, r.Target)})
 		}
 		for i, r := range repl.MaxToTg {
-			m := tgbotapi.NewMessage(chatID, formatReplacementItem(r, "max>tg"))
-			m.ParseMode = "HTML"
-			m.ReplyMarkup = tgReplItemKeyboard("max>tg", i, id, r.Target)
-			b.tgBot.Send(m)
+			b.tg.SendMessage(ctx, chatID, formatReplacementItem(r, "max>tg"), &SendOpts{ParseMode: "HTML", ReplyMarkup: tgReplItemKeyboard("max>tg", i, id, r.Target)})
 		}
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 
@@ -925,14 +897,12 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		// Обновляем сообщение
 		newText := formatReplacementItem(*r, dir)
 		kb := tgReplItemKeyboard(dir, idx, id, r.Target)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, newText, kb)
-		edit.ParseMode = "HTML"
-		b.tgBot.Send(edit)
+		b.tg.EditMessageText(ctx, chatID, msgID, newText, &SendOpts{ParseMode: "HTML", ReplyMarkup: kb})
 		label := "весь текст"
 		if newTarget == "links" {
 			label = "только ссылки"
 		}
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Тип: "+label))
+		b.tg.AnswerCallback(ctx, query.ID, "Тип: "+label)
 		return
 	}
 
@@ -958,9 +928,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			repl.MaxToTg = append(repl.MaxToTg[:idx], repl.MaxToTg[idx+1:]...)
 		}
 		b.repo.SetCrosspostReplacements(maxChatID, repl)
-		edit := tgbotapi.NewEditMessageText(chatID, msgID, "Замена удалена.")
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Удалено"))
+		b.tg.EditMessageText(ctx, chatID, msgID, "Замена удалена.", nil)
+		b.tg.AnswerCallback(ctx, query.ID, "Удалено")
 		return
 	}
 
@@ -976,16 +945,15 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		if dir == "max>tg" {
 			dirLabel = "MAX → TG"
 		}
-		kb := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("📝 Весь текст", "cprat:"+dir+":all:"+id),
-				tgbotapi.NewInlineKeyboardButtonData("🔗 Только ссылки", "cprat:"+dir+":links:"+id),
+		kb := NewInlineKeyboard(
+			NewInlineRow(
+				NewInlineButton("📝 Весь текст", "cprat:"+dir+":all:"+id),
+				NewInlineButton("🔗 Только ссылки", "cprat:"+dir+":links:"+id),
 			),
 		)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID,
-			fmt.Sprintf("Добавление замены для %s.\nГде применять замену?", dirLabel), kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.EditMessageText(ctx, chatID, msgID,
+			fmt.Sprintf("Добавление замены для %s.\nГде применять замену?", dirLabel), &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 
@@ -1002,11 +970,10 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			return
 		}
 		b.setReplWait(fromID, maxChatID, dir, target)
-		edit := tgbotapi.NewEditMessageText(chatID, msgID,
-			fmt.Sprintf("Отправьте правило замены:\n<code>from | to</code>\n\nДля регулярного выражения:\n<code>/regex/ | to</code>\n\nНапример:\n<code>utm_source=tg | utm_source=max</code>"))
-		edit.ParseMode = "HTML"
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.EditMessageText(ctx, chatID, msgID,
+			fmt.Sprintf("Отправьте правило замены:\n<code>from | to</code>\n\nДля регулярного выражения:\n<code>/regex/ | to</code>\n\nНапример:\n<code>utm_source=tg | utm_source=max</code>"),
+			&SendOpts{ParseMode: "HTML"})
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 
@@ -1019,9 +986,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		b.repo.SetCrosspostReplacements(maxChatID, CrosspostReplacements{})
 		repl := b.repo.GetCrosspostReplacements(maxChatID)
 		kb := tgReplacementsKeyboard(maxChatID)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, formatReplacementsHeader(repl), kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Очищено"))
+		b.tg.EditMessageText(ctx, chatID, msgID, formatReplacementsHeader(repl), &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "Очищено")
 		return
 	}
 
@@ -1038,9 +1004,8 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		title := parseTgCrosspostTitle(query.Message.Text)
 		text := tgCrosspostStatusText(title, direction) + fmt.Sprintf("\nTG: ↔ MAX: %d", maxChatID)
 		kb := tgCrosspostKeyboard(direction, maxChatID)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 
@@ -1051,14 +1016,13 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 			return
 		}
 		if !b.isCrosspostOwner(maxChatID, fromID) {
-			b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Только владелец связки может удалять."))
+			b.tg.AnswerCallback(ctx, query.ID, "Только владелец связки может удалять.")
 			return
 		}
 		slog.Info("TG crosspost unlink", "maxChatID", maxChatID, "by", fromID)
 		b.repo.UnpairCrosspost(maxChatID, fromID)
-		edit := tgbotapi.NewEditMessageText(chatID, msgID, "Кросспостинг удалён.")
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, "Удалено"))
+		b.tg.EditMessageText(ctx, chatID, msgID, "Кросспостинг удалён.", nil)
+		b.tg.AnswerCallback(ctx, query.ID, "Удалено")
 		return
 	}
 
@@ -1071,23 +1035,21 @@ func (b *Bridge) handleTgCallback(ctx context.Context, query *tgbotapi.CallbackQ
 		// Lookup current direction
 		_, direction, ok := b.repo.GetCrosspostTgChat(maxChatID)
 		if !ok {
-			edit := tgbotapi.NewEditMessageText(chatID, msgID, "Кросспостинг не найден.")
-			b.tgBot.Send(edit)
-			b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+			b.tg.EditMessageText(ctx, chatID, msgID, "Кросспостинг не найден.", nil)
+			b.tg.AnswerCallback(ctx, query.ID, "")
 			return
 		}
 		title := parseTgCrosspostTitle(query.Message.Text)
 		text := tgCrosspostStatusText(title, direction)
 		kb := tgCrosspostKeyboard(direction, maxChatID)
-		edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, kb)
-		b.tgBot.Send(edit)
-		b.tgBot.Request(tgbotapi.NewCallback(query.ID, ""))
+		b.tg.EditMessageText(ctx, chatID, msgID, text, &SendOpts{ReplyMarkup: kb})
+		b.tg.AnswerCallback(ctx, query.ID, "")
 		return
 	}
 }
 
 // tgCrosspostKeyboard строит inline-клавиатуру для управления кросспостингом.
-func tgCrosspostKeyboard(direction string, maxChatID int64) tgbotapi.InlineKeyboardMarkup {
+func tgCrosspostKeyboard(direction string, maxChatID int64) *InlineKeyboardMarkup {
 	lblTgMax := "TG → MAX"
 	lblMaxTg := "MAX → TG"
 	lblBoth := "⟷ Оба"
@@ -1100,15 +1062,15 @@ func tgCrosspostKeyboard(direction string, maxChatID int64) tgbotapi.InlineKeybo
 		lblBoth = "✓ ⟷ Оба"
 	}
 	id := strconv.FormatInt(maxChatID, 10)
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(lblTgMax, "cpd:tg>max:"+id),
-			tgbotapi.NewInlineKeyboardButtonData(lblMaxTg, "cpd:max>tg:"+id),
-			tgbotapi.NewInlineKeyboardButtonData(lblBoth, "cpd:both:"+id),
+	return NewInlineKeyboard(
+		NewInlineRow(
+			NewInlineButton(lblTgMax, "cpd:tg>max:"+id),
+			NewInlineButton(lblMaxTg, "cpd:max>tg:"+id),
+			NewInlineButton(lblBoth, "cpd:both:"+id),
 		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Замены", "cpr:"+id),
-			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить", "cpu:"+id),
+		NewInlineRow(
+			NewInlineButton("🔄 Замены", "cpr:"+id),
+			NewInlineButton("❌ Удалить", "cpu:"+id),
 		),
 	)
 }
@@ -1140,7 +1102,7 @@ func parseTgCrosspostTitle(text string) string {
 }
 
 // handleTgEditedChannelPost обрабатывает редактирования постов в TG-каналах.
-func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *tgbotapi.Message) {
+func (b *Bridge) handleTgEditedChannelPost(ctx context.Context, edited *TGMessage) {
 	maxMsgID, ok := b.repo.LookupMaxMsgID(edited.Chat.ID, edited.MessageID)
 	if !ok {
 		return

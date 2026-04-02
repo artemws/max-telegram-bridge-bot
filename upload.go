@@ -13,7 +13,6 @@ import (
 	"time"
 
 	maxschemes "github.com/max-messenger/max-bot-api-client-go/schemes"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // downloadURL скачивает файл по URL и возвращает bytes.
@@ -42,60 +41,44 @@ func (b *Bridge) downloadURL(url string) ([]byte, error) {
 
 // sendTgMediaFromURL скачивает файл с URL и отправляет в TG как upload.
 // maxBytes=0 means no size limit. fileName overrides name extracted from URL.
-func (b *Bridge) sendTgMediaFromURL(tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID int, maxBytes int64, fileName ...string) (tgbotapi.Message, error) {
+func (b *Bridge) sendTgMediaFromURL(ctx context.Context, tgChatID int64, mediaURL, mediaType, caption, parseMode string, replyToID, threadID int, maxBytes int64, fileName ...string) (int, error) {
 	slog.Debug("sendTgMediaFromURL start", "url", mediaURL, "type", mediaType, "tgChat", tgChatID)
 	data, nameFromURL, err := b.downloadURLWithLimit(mediaURL, maxBytes)
 	if err == nil {
 		slog.Debug("sendTgMediaFromURL downloaded", "size", len(data), "name", nameFromURL)
 	}
 	if err != nil {
-		return tgbotapi.Message{}, fmt.Errorf("download media: %w", err)
+		return 0, fmt.Errorf("download media: %w", err)
 	}
 
 	name := nameFromURL
 	if len(fileName) > 0 && fileName[0] != "" {
 		name = fileName[0]
 	}
-	fb := tgbotapi.FileBytes{Name: name, Bytes: data}
+	file := FileArg{Name: name, Bytes: data}
 
 	switch mediaType {
 	case "photo":
-		msg := tgbotapi.NewPhoto(tgChatID, fb)
-		msg.Caption = caption
-		if parseMode != "" {
-			msg.ParseMode = parseMode
-		}
-		msg.ReplyToMessageID = replyToID
-		return b.tgBot.Send(msg)
+		return b.tg.SendPhoto(ctx, tgChatID, file, &SendOpts{
+			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+		})
 	case "video":
-		msg := tgbotapi.NewVideo(tgChatID, fb)
-		msg.Caption = caption
-		if parseMode != "" {
-			msg.ParseMode = parseMode
-		}
-		msg.ReplyToMessageID = replyToID
-		return b.tgBot.Send(msg)
+		return b.tg.SendVideo(ctx, tgChatID, file, &SendOpts{
+			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+		})
 	case "audio":
-		msg := tgbotapi.NewAudio(tgChatID, fb)
-		msg.Caption = caption
-		if parseMode != "" {
-			msg.ParseMode = parseMode
-		}
-		msg.ReplyToMessageID = replyToID
-		return b.tgBot.Send(msg)
+		return b.tg.SendAudio(ctx, tgChatID, file, &SendOpts{
+			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+		})
 	case "file":
-		msg := tgbotapi.NewDocument(tgChatID, fb)
-		msg.Caption = caption
-		if parseMode != "" {
-			msg.ParseMode = parseMode
-		}
-		msg.ReplyToMessageID = replyToID
-		return b.tgBot.Send(msg)
+		return b.tg.SendDocument(ctx, tgChatID, file, &SendOpts{
+			Caption: caption, ParseMode: parseMode, ReplyToID: replyToID, ThreadID: threadID,
+		})
 	default:
 		// sticker и прочее — как фото
-		msg := tgbotapi.NewPhoto(tgChatID, fb)
-		msg.Caption = caption
-		return b.tgBot.Send(msg)
+		return b.tg.SendPhoto(ctx, tgChatID, file, &SendOpts{
+			Caption: caption, ThreadID: threadID,
+		})
 	}
 }
 
@@ -199,7 +182,7 @@ func (b *Bridge) customUploadToMax(ctx context.Context, uploadType maxschemes.Up
 
 // uploadTgPhotoToMax скачивает фото из TG и загружает в MAX через SDK (возвращает PhotoTokens).
 func (b *Bridge) uploadTgPhotoToMax(ctx context.Context, fileID string) (*maxschemes.PhotoTokens, error) {
-	fileURL, err := b.tgFileURL(fileID)
+	fileURL, err := b.tgFileURL(ctx, fileID)
 	if err != nil {
 		return nil, fmt.Errorf("tg getFileURL: %w", err)
 	}
@@ -220,7 +203,7 @@ func (b *Bridge) uploadTgPhotoToMax(ctx context.Context, fileID string) (*maxsch
 
 // uploadTgMediaToMax скачивает файл из TG и загружает в MAX
 func (b *Bridge) uploadTgMediaToMax(ctx context.Context, fileID string, uploadType maxschemes.UploadType, fileName string) (*maxschemes.UploadedInfo, error) {
-	fileURL, err := b.tgFileURL(fileID)
+	fileURL, err := b.tgFileURL(ctx, fileID)
 	if err != nil {
 		return nil, fmt.Errorf("tg getFileURL: %w", err)
 	}

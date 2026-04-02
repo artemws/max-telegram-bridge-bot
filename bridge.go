@@ -10,8 +10,6 @@ import (
 	"time"
 
 	maxbot "github.com/max-messenger/max-bot-api-client-go"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // Config — настройки bridge, читаемые из env.
@@ -48,7 +46,7 @@ const (
 type Bridge struct {
 	cfg        Config
 	repo       Repository
-	tgBot      *tgbotapi.BotAPI
+	tg         TGSender
 	maxApi     *maxbot.Api
 	httpClient *http.Client // для скачивания/загрузки файлов (большой таймаут)
 	apiClient  *http.Client // для коротких API-запросов (малый таймаут)
@@ -69,15 +67,15 @@ type Bridge struct {
 }
 
 // NewBridge создаёт экземпляр Bridge.
-func NewBridge(cfg Config, repo Repository, tgBot *tgbotapi.BotAPI, maxApi *maxbot.Api) *Bridge {
+func NewBridge(cfg Config, repo Repository, tg TGSender, maxApi *maxbot.Api) *Bridge {
 	// Derive webhook secret from tokens (stable across restarts)
-	h := sha256.Sum256([]byte(cfg.MaxToken + tgBot.Token))
+	h := sha256.Sum256([]byte(cfg.MaxToken + tg.BotToken()))
 	secret := hex.EncodeToString(h[:8])
 
 	return &Bridge{
 		cfg:    cfg,
 		repo:   repo,
-		tgBot:  tgBot,
+		tg:     tg,
 		maxApi: maxApi,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Minute, // для download/upload больших файлов
@@ -161,12 +159,12 @@ func (b *Bridge) isUserAllowed(tgUserID int64) bool {
 // checkUserAllowed проверяет доступ пользователя и отправляет сообщение об отказе если нужно.
 // Возвращает true если доступ разрешён, false — если запрещён (и уже отправил ответ).
 // userID == 0 трактуется как «нет отправителя» — доступ запрещается.
-func (b *Bridge) checkUserAllowed(chatID, userID int64) bool {
+func (b *Bridge) checkUserAllowed(ctx context.Context, chatID, userID int64, threadID int) bool {
 	if userID != 0 && b.isUserAllowed(userID) {
 		return true
 	}
 	slog.Debug("TG user not allowed", "uid", userID)
-	b.tgBot.Send(tgbotapi.NewMessage(chatID, "У вас нет прав доступа к боту."))
+	b.tg.SendMessage(ctx, chatID, "У вас нет прав доступа к боту.", &SendOpts{ThreadID: threadID})
 	return false
 }
 
@@ -181,25 +179,21 @@ func (b *Bridge) isCrosspostOwner(maxChatID, userID int64) bool {
 }
 
 // tgFileURL возвращает прямой URL файла из TG — через custom API если настроен.
-func (b *Bridge) tgFileURL(fileID string) (string, error) {
-	file, err := b.tgBot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+func (b *Bridge) tgFileURL(ctx context.Context, fileID string) (string, error) {
+	filePath, err := b.tg.GetFile(ctx, fileID)
 	if err != nil {
 		return "", err
 	}
-	if b.cfg.TgAPIURL != "" {
-		// --local mode: file_path — абсолютный путь, отдаём через nginx
-		return b.cfg.TgAPIURL + "/" + file.FilePath, nil
-	}
-	return file.Link(b.tgBot.Token), nil
+	return b.tg.GetFileDirectURL(filePath), nil
 }
 
 // tgChatTitle возвращает title TG-чата/канала по ID. Пустая строка если не удалось.
-func (b *Bridge) tgChatTitle(chatID int64) string {
-	chat, err := b.tgBot.GetChat(tgbotapi.ChatInfoConfig{ChatConfig: tgbotapi.ChatConfig{ChatID: chatID}})
+func (b *Bridge) tgChatTitle(ctx context.Context, chatID int64) string {
+	title, err := b.tg.GetChat(ctx, chatID)
 	if err != nil {
 		return ""
 	}
-	return chat.Title
+	return title
 }
 
 func (b *Bridge) tgWebhookPath() string {
@@ -211,34 +205,24 @@ func (b *Bridge) maxWebhookPath() string {
 }
 
 // registerCommands регистрирует команды бота в Telegram.
-func (b *Bridge) registerCommands() {
-	// Команды для групп и личных чатов
-	groupCmds := tgbotapi.NewSetMyCommands(
-		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
-		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
-		tgbotapi.BotCommand{Command: "crosspost", Description: "Список связок кросспостинга"},
-		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
-	)
-	if _, err := b.tgBot.Request(groupCmds); err != nil {
+func (b *Bridge) registerCommands(ctx context.Context) {
+	cmds := []BotCommand{
+		{Command: "bridge", Description: "Связать чат с MAX-чатом"},
+		{Command: "unbridge", Description: "Удалить связку чатов"},
+		{Command: "crosspost", Description: "Список связок кросспостинга"},
+		{Command: "help", Description: "Инструкция"},
+	}
+	if err := b.tg.SetMyCommands(ctx, cmds, nil); err != nil {
 		slog.Error("TG setMyCommands (default) failed", "err", err)
 	}
-
-	// Команды для админов (группы + каналы)
-	channelCmds := tgbotapi.NewSetMyCommandsWithScope(
-		tgbotapi.NewBotCommandScopeAllChatAdministrators(),
-		tgbotapi.BotCommand{Command: "bridge", Description: "Связать чат с MAX-чатом"},
-		tgbotapi.BotCommand{Command: "unbridge", Description: "Удалить связку чатов"},
-		tgbotapi.BotCommand{Command: "crosspost", Description: "Список связок кросспостинга"},
-		tgbotapi.BotCommand{Command: "help", Description: "Инструкция"},
-	)
-	if _, err := b.tgBot.Request(channelCmds); err != nil {
+	if err := b.tg.SetMyCommands(ctx, cmds, &CommandScope{Type: "all_chat_administrators"}); err != nil {
 		slog.Error("TG setMyCommands (admins) failed", "err", err)
 	}
 }
 
 // Run запускает TG и MAX listener'ы + периодическую очистку.
 func (b *Bridge) Run(ctx context.Context) {
-	b.registerCommands()
+	b.registerCommands(ctx)
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()
