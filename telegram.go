@@ -63,22 +63,33 @@ func (b *Bridge) listenTelegram(ctx context.Context) {
 					continue
 				}
 
-				// Если edit содержит медиа — отправляем как новое сообщение
 				hasMedia := edited.Photo != nil || edited.Video != nil || edited.Document != nil ||
 					edited.Animation != nil || edited.Sticker != nil || edited.Voice != nil || edited.Audio != nil
-				if hasMedia {
+
+				maxMsgID, hasMapping := b.repo.LookupMaxMsgID(edited.Chat.ID, edited.MessageID)
+
+				// Если маппинг не найден и есть медиа — отправляем как новое сообщение (fallback)
+				if hasMedia && !hasMapping {
 					prefix := b.repo.HasPrefix("tg", edited.Chat.ID)
 					caption := formatTgCaption(edited, prefix, b.cfg.MessageNewline)
 					go b.forwardTgToMax(ctx, edited, maxChatID, caption)
 					continue
 				}
 
-				// Текстовый edit
-				maxMsgID, ok := b.repo.LookupMaxMsgID(edited.Chat.ID, edited.MessageID)
-				if !ok {
+				if !hasMapping {
 					continue
 				}
+
 				prefix := b.repo.HasPrefix("tg", edited.Chat.ID)
+
+				if hasMedia {
+					// Edit с медиа — редактируем сообщение в MAX с новым вложением
+					caption := formatTgCaption(edited, prefix, b.cfg.MessageNewline)
+					go b.editTgMediaInMax(ctx, edited, maxChatID, maxMsgID, caption)
+					continue
+				}
+
+				// Текстовый edit
 				fwd := formatTgMessage(edited, prefix, b.cfg.MessageNewline)
 				if fwd == "" {
 					continue
@@ -752,6 +763,56 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		b.cbSuccess(maxChatID)
 		slog.Info("TG→MAX sent", "mid", mid, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		b.repo.SaveMsg(msg.Chat.ID, msg.MessageID, maxChatID, mid)
+	}
+}
+
+// editTgMediaInMax редактирует сообщение с медиа в MAX (TG→MAX edit с вложением).
+func (b *Bridge) editTgMediaInMax(ctx context.Context, msg *TGMessage, maxChatID int64, maxMsgID string, caption string) {
+	uid := tgUserID(msg)
+	m := maxbot.NewMessage().SetChat(maxChatID)
+
+	if msg.Photo != nil {
+		photo := msg.Photo[len(msg.Photo)-1]
+		photoEntities := msg.CaptionEntities
+		mdCaption := tgEntitiesToMarkdown(caption, photoEntities)
+		m.SetText(mdCaption)
+		if mdCaption != caption {
+			m.SetFormat("markdown")
+		}
+		if b.cfg.TgAPIURL != "" {
+			if uploaded, err := b.uploadTgPhotoToMax(ctx, photo.FileID); err == nil {
+				m.AddPhoto(uploaded)
+			} else {
+				slog.Error("TG→MAX edit photo upload failed", "err", err)
+				return
+			}
+		} else if fileURL, err := b.tgFileURL(ctx, photo.FileID); err == nil {
+			if uploaded, err := b.maxApi.Uploads.UploadPhotoFromUrl(ctx, fileURL); err == nil {
+				m.AddPhoto(uploaded)
+			} else {
+				slog.Error("TG→MAX edit photo upload failed", "err", err)
+				return
+			}
+		}
+	} else {
+		// Видео, документ, анимация, голос, аудио — для edit обновляем только текст,
+		// т.к. замена нефотовложений через edit не поддерживается MAX API (только photo payload).
+		// Медиа остаётся прежним, обновляется caption.
+		entities := msg.CaptionEntities
+		if entities == nil {
+			entities = msg.Entities
+		}
+		mdCaption := tgEntitiesToMarkdown(caption, entities)
+		m.SetText(mdCaption)
+		if mdCaption != caption {
+			m.SetFormat("markdown")
+		}
+	}
+
+	if err := b.maxApi.Messages.EditMessage(ctx, maxMsgID, m); err != nil {
+		slog.Error("TG→MAX edit media failed", "err", err, "uid", uid, "tgChat", msg.Chat.ID, "maxMsgID", maxMsgID)
+	} else {
+		slog.Info("TG→MAX edited media", "mid", maxMsgID, "uid", uid, "tgChat", msg.Chat.ID)
 	}
 }
 
