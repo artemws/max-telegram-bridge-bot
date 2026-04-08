@@ -90,11 +90,11 @@ func TestTgEntitiesToMarkdown_MultipleEntities(t *testing.T) {
 }
 
 func TestTgEntitiesToMarkdown_TrailingSpaces(t *testing.T) {
-	// Entity covering "hello " (with trailing space) — space should be outside markers
+	// Entity covering "hello " (with trailing space) — markers placed at exact boundaries
 	got := tgEntitiesToMarkdown("hello world", []Entity{
 		{Type: "bold", Offset: 0, Length: 6}, // "hello "
 	})
-	want := "**hello** world"
+	want := "**hello **world"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -104,7 +104,31 @@ func TestTgEntitiesToMarkdown_LeadingSpaces(t *testing.T) {
 	got := tgEntitiesToMarkdown("a  bold rest", []Entity{
 		{Type: "bold", Offset: 1, Length: 6}, // "  bold"
 	})
-	want := "a  **bold** rest"
+	want := "a**  bold** rest"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_OverlappingBoldItalic(t *testing.T) {
+	// Same text is both bold and italic — should produce nested markers, not duplicate text
+	got := tgEntitiesToMarkdown("Тест разметки", []Entity{
+		{Type: "bold", Offset: 5, Length: 8},
+		{Type: "italic", Offset: 5, Length: 8},
+	})
+	want := "Тест **_разметки_**"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTgEntitiesToMarkdown_OverlappingBoldItalicStrike(t *testing.T) {
+	got := tgEntitiesToMarkdown("Тест разметки", []Entity{
+		{Type: "bold", Offset: 5, Length: 8},
+		{Type: "italic", Offset: 5, Length: 8},
+		{Type: "strikethrough", Offset: 5, Length: 8},
+	})
+	want := "Тест **_~~разметки~~_**"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

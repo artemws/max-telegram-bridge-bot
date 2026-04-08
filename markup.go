@@ -13,7 +13,8 @@ import (
 // --- TG Entities → Markdown (для MAX) ---
 
 // tgEntitiesToMarkdown конвертирует TG text + entities в markdown-текст для MAX.
-// Обрабатывает edge cases: пробелы перед/после маркеров выносятся за пределы тегов.
+// Использует tag-insertion подход для корректной обработки вложенных/перекрывающихся entities
+// (например bold+italic на одном тексте).
 func tgEntitiesToMarkdown(text string, entities []Entity) string {
 	if len(entities) == 0 {
 		return text
@@ -23,25 +24,15 @@ func tgEntitiesToMarkdown(text string, entities []Entity) string {
 	runes := []rune(text)
 	utf16units := utf16.Encode(runes)
 
-	// Собираем фрагменты: чередуя plain text и форматированные куски
-	// Работаем в UTF-16 координатах
-	type fragment struct {
-		start, end int // UTF-16 offsets
-		entity     *Entity
+	type tag struct {
+		pos  int
+		open bool
+		idx  int // индекс entity — для правильного порядка вложенных тегов
+		text string
 	}
 
-	// Сортируем entities по offset
-	sorted := make([]Entity, len(entities))
-	copy(sorted, entities)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Offset < sorted[j].Offset
-	})
-
-	var sb strings.Builder
-	pos := 0
-
-	for i := range sorted {
-		e := &sorted[i]
+	var tags []tag
+	for i, e := range entities {
 		var open, close string
 		switch e.Type {
 		case "bold":
@@ -54,47 +45,60 @@ func tgEntitiesToMarkdown(text string, entities []Entity) string {
 			open, close = "```\n", "\n```"
 		case "strikethrough":
 			open, close = "~~", "~~"
+		case "underline":
+			// MAX markdown не поддерживает underline — пропускаем
+			continue
 		case "text_link":
 			open = "["
 			close = fmt.Sprintf("](%s)", e.URL)
 		default:
 			continue
 		}
-
-		// Текст до entity
-		if e.Offset > pos {
-			sb.WriteString(utf16ToString(utf16units[pos:e.Offset]))
-		}
-
-		// Текст entity
 		end := e.Offset + e.Length
 		if end > len(utf16units) {
 			end = len(utf16units)
 		}
-		inner := utf16ToString(utf16units[e.Offset:end])
+		tags = append(tags, tag{pos: e.Offset, open: true, idx: i, text: open})
+		tags = append(tags, tag{pos: end, open: false, idx: i, text: close})
+	}
 
-		// Trim пробелов: выносим leading/trailing пробелы за маркеры
-		trimmed := strings.TrimRight(inner, " \t\n")
-		trailingSpaces := inner[len(trimmed):]
-		trimmed2 := strings.TrimLeft(trimmed, " \t\n")
-		leadingSpaces := trimmed[:len(trimmed)-len(trimmed2)]
+	if len(tags) == 0 {
+		return text
+	}
 
-		sb.WriteString(leadingSpaces)
-		if trimmed2 != "" {
-			sb.WriteString(open)
-			sb.WriteString(trimmed2)
-			sb.WriteString(close)
+	sort.Slice(tags, func(i, j int) bool {
+		if tags[i].pos != tags[j].pos {
+			return tags[i].pos < tags[j].pos
 		}
-		sb.WriteString(trailingSpaces)
+		// На одной позиции: close перед open (для смежных entities)
+		if tags[i].open != tags[j].open {
+			return !tags[i].open
+		}
+		// Среди open на одной позиции: по порядку entity
+		if tags[i].open {
+			return tags[i].idx < tags[j].idx
+		}
+		// Среди close на одной позиции: в обратном порядке (правильная вложенность)
+		return tags[i].idx > tags[j].idx
+	})
 
-		pos = end
+	var sb strings.Builder
+	tagIdx := 0
+	for i := 0; i <= len(utf16units); i++ {
+		for tagIdx < len(tags) && tags[tagIdx].pos == i {
+			sb.WriteString(tags[tagIdx].text)
+			tagIdx++
+		}
+		if i < len(utf16units) {
+			if utf16.IsSurrogate(rune(utf16units[i])) && i+1 < len(utf16units) {
+				r := utf16.DecodeRune(rune(utf16units[i]), rune(utf16units[i+1]))
+				sb.WriteRune(r)
+				i++
+			} else {
+				sb.WriteRune(rune(utf16units[i]))
+			}
+		}
 	}
-
-	// Остаток текста
-	if pos < len(utf16units) {
-		sb.WriteString(utf16ToString(utf16units[pos:]))
-	}
-
 	return sb.String()
 }
 
