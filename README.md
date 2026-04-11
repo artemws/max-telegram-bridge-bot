@@ -6,6 +6,8 @@
 
 **Боты:** [Telegram](https://t.me/MaxTelegramBridgeBot) | [MAX](https://max.ru/id710708943262_bot)
 
+**Поддержать:** [tribute](https://t.me/tribute/app?startapp=dHjs)
+
 ## Возможности
 
 - Пересылка текстовых сообщений в обе стороны
