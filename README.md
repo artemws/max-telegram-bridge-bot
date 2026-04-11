@@ -2,20 +2,15 @@
   <img src="https://maxtelegrambridge.ru/favicon.svg" width="80" height="80" alt="Bridge Bot">
 </p>
 
-<h1 align="center">MaxTelegramBridgeBot</h1>
+# MaxTelegramBridgeBot
 
-<p align="center">
-  Мост между Telegram и <a href="https://max.ru">MAX</a> мессенджером.<br>
-  Сообщения, медиа, файлы, редактирования — всё синхронизируется.
-</p>
+Мост между Telegram и [MAX](https://max.ru) мессенджером. Пересылает сообщения, медиа, файлы и редактирования между связанными чатами.
 
-<p align="center">
-  <a href="https://maxtelegrambridge.ru"><img src="https://img.shields.io/badge/сайт-maxtelegrambridge.ru-black?style=flat-square" alt="Сайт"></a>
-  <a href="https://t.me/MaxTelegramBridgeBot"><img src="https://img.shields.io/badge/Telegram--бот-black?style=flat-square&logo=telegram" alt="Telegram"></a>
-  <a href="https://max.ru/id710708943262_bot"><img src="https://img.shields.io/badge/MAX--бот-black?style=flat-square" alt="MAX"></a>
-  <a href="https://github.com/BEARlogin/max-telegram-bridge-bot"><img src="https://img.shields.io/badge/GitHub-black?style=flat-square&logo=github" alt="GitHub"></a>
-  <a href="https://t.me/tribute/app?startapp=dHjs"><img src="https://img.shields.io/badge/❤_Поддержать-black?style=flat-square" alt="Поддержать"></a>
-</p>
+**Сайт:** [maxtelegrambridge.ru](https://maxtelegrambridge.ru)
+
+**Боты:** [Telegram](https://t.me/MaxTelegramBridgeBot) | [MAX](https://max.ru/id710708943262_bot)
+
+**[❤ Поддержать проект](https://t.me/tribute/app?startapp=dHjs)**
 
 ## Возможности
 
