@@ -713,7 +713,6 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 		entities = msg.CaptionEntities
 	}
 	mdText := tgEntitiesToMarkdown(rawText, entities)
-	hasFormatting := mdText != rawText
 
 	// Fallback для неудавшейся загрузки медиа
 	if mediaAttType == "" && msg.Text == "" {
