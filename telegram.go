@@ -750,13 +750,20 @@ func (b *Bridge) forwardTgToMax(ctx context.Context, msg *TGMessage, maxChatID i
 	}
 	mdCaption := formatAttributionMD(name, mdText, b.cfg.MessageNewline)
 
+	// Если для этого чата уже есть сообщения в очереди — не отправляем напрямую,
+	// чтобы не нарушить порядок. Сразу ставим в очередь.
+	if b.hasPendingForChat("tg2max", maxChatID) {
+		slog.Info("TG→MAX queued (pending exists)", "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
+		b.enqueueTg2Max(msg.Chat.ID, msg.MessageID, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, "markdown")
+		return
+	}
+
 	var mid string
 	var sendErr error
 
 	if mediaAttType != "" {
 		slog.Info("TG→MAX sending direct", "type", mediaAttType, "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
-		format := "markdown"
-		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, format)
+		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, mediaAttType, mediaToken, replyTo, "markdown")
 	} else {
 		slog.Info("TG→MAX sending", "uid", uid, "tgChat", msg.Chat.ID, "maxChat", maxChatID)
 		mid, sendErr = b.sendMaxDirectFormatted(ctx, maxChatID, mdCaption, "", "", replyTo, "markdown")
