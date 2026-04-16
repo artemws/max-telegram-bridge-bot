@@ -1027,6 +1027,14 @@ func (b *Bridge) forwardMaxToTg(ctx context.Context, msgUpd *maxschemes.MessageC
 		}
 	}
 
+	// Если для этого чата уже есть сообщения в очереди — не отправляем напрямую,
+	// чтобы не нарушить порядок доставки. Сразу ставим в очередь.
+	if b.hasPendingForChat("max2tg", tgChatID) {
+		slog.Info("MAX→TG queued (pending exists)", "uid", msgUpd.Message.Sender.UserId, "maxChat", chatID, "tgChat", tgChatID)
+		b.enqueueMax2Tg(chatID, tgChatID, body.Mid, htmlCaption, qAttType, qAttURL, pm)
+		return
+	}
+
 	// Отправляем фото/видео как альбом (если их несколько — grouped, иначе — single)
 	if len(albumMedia) > 0 {
 		mediaSent = true
