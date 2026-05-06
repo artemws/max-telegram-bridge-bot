@@ -17,9 +17,9 @@ import (
 func (b *Bridge) listenMax(ctx context.Context) {
 	var updates <-chan maxschemes.UpdateInterface
 
-	if b.cfg.WebhookURL != "" {
+	if b.cfg.MaxWebhookURL != "" {
 		whPath := b.maxWebhookPath()
-		whURL := strings.TrimRight(b.cfg.WebhookURL, "/") + whPath
+		whURL := strings.TrimRight(b.cfg.MaxWebhookURL, "/") + whPath
 		ch := make(chan maxschemes.UpdateInterface, 100)
 		http.HandleFunc(whPath, b.maxApi.GetHandler(ch))
 		updateTypes := []string{
